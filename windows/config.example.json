@@ -19,7 +19,9 @@
   "testBatchSize": 3,
   "delaySeconds": 3,
   "sendConfirmationTimeoutSeconds": 120,
+  "runDeadlineMinutes": 300,
   "logRetentionDays": 90,
+  "previewRetentionDays": 2,
   "installationId": "generated-by-installer",
   "machineBinding": "generated-by-installer"
 }

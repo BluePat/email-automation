@@ -30,6 +30,9 @@ svislítkem je identifikátor konkrétního pokusu.
 
 Při selhání se přihlášenému uživateli zobrazí upozornění a v datové složce vznikne
 soubor `ACTION_REQUIRED.txt`. Logy starší než 90 dní se automaticky mažou.
+Chyby validace vracejí Plánovači úloh nenulový výsledek, i když se platné zprávy
+předtím bezpečně zpracovaly. Zbývající zprávy mohou být odloženy před dosažením
+pětihodinového limitu běhu; zůstanou `K ODESLÁNÍ` pro další den.
 
 ## Bezpečné opakování
 

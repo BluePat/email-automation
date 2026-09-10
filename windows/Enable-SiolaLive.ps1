@@ -13,11 +13,20 @@ if ($PSVersionTable.PSVersion.Major -lt 7 -or -not $IsWindows) {
 $configPath = Join-Path $PSScriptRoot 'config.json'
 if (-not (Test-Path -LiteralPath $configPath)) { throw 'Chybí config.json. Nejdříve spusťte instalaci.' }
 $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$dataDirectory = [Environment]::ExpandEnvironmentVariables([string]$config.dataDirectory)
+if (-not $dataDirectory) { throw 'V konfiguraci chybí dataDirectory.' }
+Import-Module (Join-Path $PSScriptRoot 'Siola.Core.psm1') -Force
 
 Write-Host 'Probíhá poslední kontrola tabulky. Nic se nebude měnit ani odesílat.'
-& (Join-Path $PSScriptRoot 'Invoke-SiolaAutomation.ps1') -Mode VALIDATE -ConfigPath $configPath
+$digestPath = Join-Path $dataDirectory "activation-digest-$([guid]::NewGuid().ToString('N')).txt"
+try {
+    & (Join-Path $PSScriptRoot 'Invoke-SiolaAutomation.ps1') -Mode VALIDATE -ConfigPath $configPath `
+        -ApprovalDigestPath $digestPath
+    if (-not (Test-Path -LiteralPath $digestPath -PathType Leaf)) { throw 'Kontrola nevytvořila otisk obsahu.' }
+    $currentApprovalDigest = (Get-Content -LiteralPath $digestPath -Raw -Encoding UTF8).Trim()
+}
+finally { Remove-Item -LiteralPath $digestPath -Force -ErrorAction SilentlyContinue }
 
-$dataDirectory = [Environment]::ExpandEnvironmentVariables([string]$config.dataDirectory)
 $receiptPath = Join-Path $dataDirectory 'test-success.json'
 if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
     throw 'Chybí potvrzení úspěšného TESTU. Nejdříve spusťte TEST.cmd.'
@@ -45,6 +54,15 @@ if (-not (Test-Path -LiteralPath ([string]$receipt.previewPath) -PathType Leaf))
 if ([int]$receipt.sentTestJobs -lt 1) {
     throw 'Poslední TEST neposlal žádnou testovací zprávu. Spusťte TEST.cmd znovu.'
 }
+if (-not $receipt.PSObject.Properties['approvalDigest'] -or
+    [string]$receipt.approvalDigest -cne $currentApprovalDigest) {
+    throw 'Obsah připravených e-mailů se od posledního TESTU změnil. Spusťte TEST.cmd znovu.'
+}
+$currentRuntimeFingerprint = Get-SiolaRuntimeFingerprint -RootPath $PSScriptRoot
+if (-not $receipt.PSObject.Properties['runtimeFingerprint'] -or
+    [string]$receipt.runtimeFingerprint -cne $currentRuntimeFingerprint) {
+    throw 'Provozní soubory se od posledního TESTU změnily. Spusťte TEST.cmd znovu.'
+}
 
 $expectedConfirmation = if ($TakeOver) { 'PREVZIT' } else { 'LIVE' }
 $prompt = if ($TakeOver) {
@@ -68,4 +86,17 @@ else {
 $config.mode = 'LIVE'
 $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $configPath -Encoding UTF8
 Enable-ScheduledTask -TaskName $TaskName | Out-Null
+foreach ($sensitivePath in @([string]$receipt.previewPath, $receiptPath)) {
+    if (-not $sensitivePath) { continue }
+    try { Remove-Item -LiteralPath $sensitivePath -Force -ErrorAction Stop }
+    catch { Write-Warning "Citlivý soubor po zapnutí LIVE nešlo odstranit: $sensitivePath" }
+}
+$previewDirectory = Join-Path ([Environment]::ExpandEnvironmentVariables([string]$config.dataDirectory)) 'previews'
+if (Test-Path -LiteralPath $previewDirectory -PathType Container) {
+    Get-ChildItem -LiteralPath $previewDirectory -Filter 'preview-*.html' -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop }
+            catch { Write-Warning "Starší citlivý náhled nešlo odstranit: $($_.FullName)" }
+        }
+}
 Write-Host "Naplánovaná úloha '$TaskName' je zapnutá v režimu LIVE."

@@ -49,10 +49,11 @@ zobrazit žádost o oprávnění správce; tu je nutné potvrdit.
    údaje podpisu a denní čas spuštění. Instalátor nemá žádné předvyplněné provozní
    identifikátory ani osobní údaje.
 5. Instalátor zkopíruje provozní soubory do
-   `%LOCALAPPDATA%\SIOLA Email Automation` a omezí přístup ke klíči na aktuálního
-   uživatele.
-6. Po ověření kopie nabídne přesun původního JSON klíče do Koše. Doporučená volba
-   je stisknout Enter a původní soubor neponechávat ve Stažených souborech.
+   `%LOCALAPPDATA%\SIOLA Email Automation` a omezí přístup ke konfiguraci, klíči,
+   logům a náhledům na aktuálního uživatele a systémový účet.
+6. Až po úspěšném vytvoření vypnuté úlohy nabídne trvalé smazání původního JSON
+   klíče. Smazání vyžaduje napsat přesně `SMAZAT`; soubor se nepřesouvá do Koše.
+   Pokud jej ponecháte, bezpečně jej odstraňte později.
 7. Naplánovaná úloha **SIOLA Email Automation** zůstane vypnutá.
 
 Úloha běží pouze tehdy, když je tento uživatel ve Windows přihlášený. Classic
@@ -94,6 +95,10 @@ U každé zprávy zkontrolujte:
 
 V automaticky otevřeném HTML náhledu navíc projděte nebo vyhledejte všechny obce,
 příjemce a oslovení. Úspěšný TEST vytvoří potvrzení platné 24 hodin.
+Potvrzení obsahuje otisk všech připravených zpráv a provozních souborů. Jakákoli
+změna připravených řádků, podpisu nebo programu proto vyžaduje nový TEST. Náhled se
+po zapnutí LIVE odstraní; bez zapnutí se smaže při nejbližším dalším spuštění,
+jakmile je starší než dva dny.
 
 Pokud Outlook zobrazí bezpečnostní dotaz na programové odesílání, nepovolujte ostrý
 režim, dokud správce neověří zabezpečení Outlooku a aktuální antivirus.
@@ -104,6 +109,12 @@ Až po schválení testů spusťte `ENABLE_LIVE.cmd`. Skript znovu provede
 VALIDATE. Potom požádá o napsání přesného slova `LIVE` a teprve následně zapne
 naplánovanou úlohu. Při prvním zapnutí zároveň tabulku interně přiřadí této jediné
 instalaci. Druhá instalace se stejnou tabulkou bude bezpečně odmítnuta.
+Pokud právě běží stará instalace, převzetí se odmítne až do vypršení jejího
+běhového zámku. Starou úlohu přesto vždy nejprve ručně vypněte.
 
 Výchozí dávka je 50 žadatelů za den. Starosta a tajemník mohou znamenat až dvě
 samostatné zprávy na jednoho žadatele.
+Automat označí vybrané řádky dočasnými interními značkami, které se při řazení
+přesunou spolu s řádkem. Před každým e-mailem znovu ověří úplný obsah, členství
+řádků, svou rezervaci a běhový zámek. Bezpečné seřazení proto nezamění cílový řádek;
+změna schváleného obsahu automat zastaví.

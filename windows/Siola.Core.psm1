@@ -212,6 +212,26 @@ function Get-Projects {
     return @($projects)
 }
 
+function Get-SiolaRowApprovalFingerprint {
+    param([Parameter(Mandatory)]$Row)
+    $payload = [ordered]@{
+        Call = [string]$Row.Call
+        RmNumber = [string]$Row.RmNumber
+        Applicant = [string]$Row.Applicant
+        ProjectName = [string]$Row.ProjectName
+        Grant = $Row.Grant
+        SecretarySalutation = [string]$Row.SecretarySalutation
+        SecretaryEmail = [string]$Row.SecretaryEmail
+        MayorSalutation = [string]$Row.MayorSalutation
+        MayorEmail = [string]$Row.MayorEmail
+        Status = [string]$Row.Status
+        MayorStatus = [string]$Row.MayorStatus
+        SecretaryStatus = [string]$Row.SecretaryStatus
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 4 -Compress))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
+}
+
 function New-EmailHtml {
     param(
         [string]$Salutation,
@@ -282,6 +302,8 @@ function New-EmailJob {
     $jobId = "$RunId-$Ordinal-$Role"
     $baseSubject = "$(Get-ShortApplicant $Applicant) – projekt FVE / dotace $Call"
     $isTest = $Mode -eq 'TEST'
+    $approvalBodyHtml = New-EmailHtml -Salutation $Salutation -Projects $Projects -Call $Call `
+        -FormattedGrant (Format-GrantCzk $TotalGrant) -Signature $Signature
     return [pscustomobject]@{
         JobId = $jobId
         Role = $Role
@@ -289,6 +311,8 @@ function New-EmailJob {
         IntendedTo = $Email
         To = $(if ($isTest) { $TestRecipient } else { $Email })
         Subject = $(if ($isTest) { "[TEST – původně $Email] $baseSubject" } else { $baseSubject })
+        ApprovalSubject = $baseSubject
+        ApprovalBodyHtml = $approvalBodyHtml
         BodyHtml = (New-EmailHtml -Salutation $Salutation -Projects $Projects -Call $Call `
             -FormattedGrant (Format-GrantCzk $TotalGrant) -Signature $Signature `
             -TestOriginalRecipient $(if ($isTest) { $Email } else { '' }))
@@ -390,7 +414,9 @@ function Get-SiolaPreparedBatch {
         if ($errors.Count -gt 0) {
             $invalidGroups.Add([pscustomobject]@{
                 Applicant = $(if ($applicant.Value) { $applicant.Value } else { "(řádek $($groupRows[0].RowNumber))" })
+                MatchApplicant = [string]$groupRows[0].Applicant
                 RowNumbers = [int[]]@($groupRows.RowNumber)
+                ApprovalRowFingerprints = [string[]]@($groupRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
                 Errors = [string[]]@($errors)
             })
             continue
@@ -415,7 +441,9 @@ function Get-SiolaPreparedBatch {
 
         $prepared = [pscustomobject]@{
             Applicant = $applicant.Value
+            MatchApplicant = $applicant.Value
             RowNumbers = [int[]]@($groupRows.RowNumber)
+            ApprovalRowFingerprints = [string[]]@($groupRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
             Jobs = [object[]]@($jobs)
             MayorRequired = $true
             MayorAlreadySent = [bool]$mayorState.AlreadySent
@@ -440,6 +468,57 @@ function Get-SiolaPreparedBatch {
     }
 }
 
+function Get-SiolaBatchApprovalFingerprint {
+    param([Parameter(Mandatory)]$Batch)
+    $groupRecords = @($Batch.Groups | ForEach-Object {
+        $group = $_
+        [ordered]@{
+            applicant = [string]$group.Applicant
+            rows = [string[]]@($group.ApprovalRowFingerprints | Sort-Object)
+            jobs = [object[]]@($group.Jobs | Sort-Object Role | ForEach-Object {
+                [ordered]@{
+                    role = [string]$_.Role
+                    intendedTo = [string]$_.IntendedTo
+                    subject = [string]$_.ApprovalSubject
+                    bodyHtml = [string]$_.ApprovalBodyHtml
+                }
+            })
+        }
+    } | Sort-Object applicant)
+    $completedRecords = @($Batch.CompletedGroups | ForEach-Object {
+        [ordered]@{
+            applicant = [string]$_.Applicant
+            rows = [string[]]@($_.ApprovalRowFingerprints | Sort-Object)
+        }
+    } | Sort-Object applicant)
+    $payload = [ordered]@{
+        eligibleRowCount = [int]$Batch.EligibleRowCount
+        groups = [object[]]$groupRecords
+        completedGroups = [object[]]$completedRecords
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 10 -Compress))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
+}
+
+function Get-SiolaRuntimeFingerprint {
+    param([Parameter(Mandatory)][string]$RootPath)
+    $files = @(
+        'Invoke-SiolaAutomation.ps1',
+        'Siola.Core.psm1',
+        'Siola.GoogleSheets.psm1',
+        'Siola.Outlook.psm1',
+        'Enable-SiolaLive.ps1'
+    )
+    $records = [Collections.Generic.List[string]]::new()
+    foreach ($file in $files) {
+        $path = Join-Path $RootPath $file
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Chybí provozní soubor $file." }
+        $records.Add("$file=$((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash)")
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($records -join "`n"))
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
+}
+
 function ConvertTo-A1Column {
     param([int]$OneBasedColumn)
     if ($OneBasedColumn -lt 1) { throw 'Číslo sloupce musí být kladné.' }
@@ -453,4 +532,5 @@ function ConvertTo-A1Column {
     return $result
 }
 
-Export-ModuleMember -Function Get-SiolaPreparedBatch, ConvertTo-A1Column, Test-SiolaSentStatus
+Export-ModuleMember -Function Get-SiolaPreparedBatch, ConvertTo-A1Column, Test-SiolaSentStatus, `
+    Get-SiolaRowApprovalFingerprint, Get-SiolaBatchApprovalFingerprint, Get-SiolaRuntimeFingerprint

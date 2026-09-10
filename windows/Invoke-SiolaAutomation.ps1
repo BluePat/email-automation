@@ -2,6 +2,7 @@
 param(
     [string]$Mode = '',
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'),
+    [string]$ApprovalDigestPath = '',
     [switch]$ForceUnlock
 )
 
@@ -86,11 +87,59 @@ function ConvertTo-SourceRows {
     return @($rows)
 }
 
-function New-CellUpdate {
-    param([int]$RowNumber, [int]$ColumnIndex, [AllowNull()]$Value)
-    return [pscustomobject]@{
-        Cell = "$(ConvertTo-A1Column ($ColumnIndex + 1))$RowNumber"
-        Value = $(if ($null -eq $Value) { '' } else { $Value })
+function New-TargetCellUpdate {
+    param([int]$ColumnIndex, [AllowNull()]$Value)
+    return [pscustomobject]@{ ColumnIndex = $ColumnIndex; Value = $(if ($null -eq $Value) { '' } else { $Value }) }
+}
+
+function Get-SiolaVerifiedRowTargets {
+    param(
+        [Parameter(Mandatory)][string]$TargetPrefix,
+        [Parameter(Mandatory)][object[]]$ExpectedTargets,
+        [Parameter(Mandatory)][object[]]$FreshRows,
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    $located = @(Get-SiolaRowTargets -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken `
+        -TargetPrefix $TargetPrefix)
+    if ($located.Count -ne $ExpectedTargets.Count) {
+        throw 'Některé dočasné značky řádků chybí nebo přebývají.'
+    }
+    $expectedValues = @($ExpectedTargets.Value | Sort-Object)
+    $actualValues = @($located.Value | Sort-Object)
+    if (($expectedValues -join "`n") -cne ($actualValues -join "`n")) {
+        throw 'Dočasné značky řádků se změnily.'
+    }
+    $freshByNumber = @{}
+    foreach ($row in $FreshRows) { $freshByNumber[[int]$row.RowNumber] = $row }
+    foreach ($target in $located) {
+        if (-not $freshByNumber.ContainsKey([int]$target.RowNumber)) {
+            throw 'Označený řádek už v tabulce neexistuje.'
+        }
+        $target | Add-Member -NotePropertyName Row -NotePropertyValue $freshByNumber[[int]$target.RowNumber] -Force
+    }
+    return $located
+}
+
+function Set-SiolaTargetUpdates {
+    param(
+        [Parameter(Mandatory)][object[]]$Targets,
+        [Parameter(Mandatory)][scriptblock]$BuildUpdates,
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    $payload = @($Targets | ForEach-Object {
+        [pscustomobject]@{ TargetValue = $_.Value; Updates = [object[]]@(& $BuildUpdates $_) }
+    })
+    Set-SiolaRowTargetCells -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken -TargetUpdates $payload
+}
+
+function Assert-SiolaTargetApproval {
+    param([Parameter(Mandatory)]$Group, [Parameter(Mandatory)][object[]]$Targets)
+    $expected = @($Group.ApprovalRowFingerprints | Sort-Object)
+    $actual = @($Targets | ForEach-Object { Get-SiolaRowApprovalFingerprint $_.Row } | Sort-Object)
+    if ($expected.Count -ne $actual.Count -or ($expected -join "`n") -cne ($actual -join "`n")) {
+        throw "Označené řádky pro '$($Group.Applicant)' neodpovídají schválenému obsahu. Nic nebylo odesláno."
     }
 }
 
@@ -101,43 +150,100 @@ function Get-ShortFailure {
     return $clean.Substring(0, [math]::Min(160, $clean.Length))
 }
 
-function Get-SiolaRowFingerprint {
-    param([Parameter(Mandatory)]$Row)
-    $payload = [ordered]@{
-        RowNumber = [int]$Row.RowNumber
-        Call = [string]$Row.Call
-        RmNumber = [string]$Row.RmNumber
-        Applicant = [string]$Row.Applicant
-        ProjectName = [string]$Row.ProjectName
-        Grant = $Row.Grant
-        SecretarySalutation = [string]$Row.SecretarySalutation
-        SecretaryEmail = [string]$Row.SecretaryEmail
-        MayorSalutation = [string]$Row.MayorSalutation
-        MayorEmail = [string]$Row.MayorEmail
-        Status = [string]$Row.Status
-        MayorStatus = [string]$Row.MayorStatus
-        SecretaryStatus = [string]$Row.SecretaryStatus
+function Assert-SiolaHeaderLayout {
+    param(
+        [Parameter(Mandatory)]$Expected,
+        [Parameter(Mandatory)]$Actual
+    )
+    foreach ($headerName in $Expected.Keys) {
+        if (-not $Actual.ContainsKey($headerName) -or $Actual[$headerName] -ne $Expected[$headerName]) {
+            throw "Pořadí sloupců se během běhu změnilo ($headerName). LIVE byl zastaven."
+        }
     }
-    $bytes = [Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 4 -Compress))
-    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
 }
 
-function Assert-SiolaGroupUnchanged {
+function Resolve-SiolaFreshEligibleGroup {
+    param([Parameter(Mandatory)]$Group, [Parameter(Mandatory)][object[]]$FreshRows)
+    $expected = [string[]]@($Group.ApprovalRowFingerprints | Sort-Object)
+    $matchApplicant = if ($Group.PSObject.Properties['MatchApplicant']) { [string]$Group.MatchApplicant } else { [string]$Group.Applicant }
+    $applicantKey = ([regex]::Replace($matchApplicant, '\s+', ' ')).Trim().ToLowerInvariant()
+    $sameApplicant = @($FreshRows | Where-Object {
+        ([string]$_.Status) -ceq 'K ODESLÁNÍ' -and
+        ([regex]::Replace(([string]$_.Applicant), '\s+', ' ')).Trim().ToLowerInvariant() -ceq $applicantKey
+    })
+    $actual = [string[]]@($sameApplicant | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
+    if ($expected.Count -ne $actual.Count -or ($expected -join "`n") -cne ($actual -join "`n")) {
+        throw "Připravené řádky žadatele '$($Group.Applicant)' se od načtení změnily. Nic nebylo odesláno."
+    }
+    return [pscustomobject]@{ RowNumbers = [int[]]@($sameApplicant.RowNumber); Rows = [object[]]$sameApplicant }
+}
+
+function Get-SiolaExpectedClaimFingerprints {
     param(
         [Parameter(Mandatory)]$Group,
-        [Parameter(Mandatory)][hashtable]$OriginalRows,
-        [Parameter(Mandatory)][hashtable]$FreshRows
+        [Parameter(Mandatory)][object[]]$ClaimSourceRows,
+        [Parameter(Mandatory)][string]$RunId
     )
-    foreach ($rowNumber in $Group.RowNumbers) {
-        if (-not $FreshRows.ContainsKey($rowNumber)) {
-            throw "Řádek $rowNumber už v tabulce neexistuje. LIVE byl zastaven."
+    $fingerprints = [Collections.Generic.List[string]]::new()
+    foreach ($row in $ClaimSourceRows) {
+        $expected = [pscustomobject]@{
+            Call = $row.Call; RmNumber = $row.RmNumber; Applicant = $row.Applicant
+            ProjectName = $row.ProjectName; Grant = $row.Grant
+            SecretarySalutation = $row.SecretarySalutation; SecretaryEmail = $row.SecretaryEmail
+            MayorSalutation = $row.MayorSalutation; MayorEmail = $row.MayorEmail
+            Status = "ZPRACOVÁVÁ SE | $RunId"
+            MayorStatus = $row.MayorStatus; SecretaryStatus = $row.SecretaryStatus
         }
-        $before = Get-SiolaRowFingerprint $OriginalRows[$rowNumber]
-        $after = Get-SiolaRowFingerprint $FreshRows[$rowNumber]
-        if ($before -cne $after) {
-            throw "Řádek $rowNumber se po validaci změnil. Nebyl odeslán žádný e-mail pro $($Group.Applicant)."
+        foreach ($job in $Group.Jobs) {
+            if ($job.Role -eq 'STAROSTA') { $expected.MayorStatus = "ZPRACOVÁVÁ SE | $($job.JobId)" }
+            else { $expected.SecretaryStatus = "ZPRACOVÁVÁ SE | $($job.JobId)" }
         }
+        $fingerprints.Add((Get-SiolaRowApprovalFingerprint $expected))
     }
+    return [string[]]@($fingerprints | Sort-Object)
+}
+
+function Resolve-SiolaClaimedGroup {
+    param(
+        [Parameter(Mandatory)]$Group,
+        [Parameter(Mandatory)][object[]]$ClaimSourceRows,
+        [Parameter(Mandatory)][object[]]$FreshRows,
+        [Parameter(Mandatory)][string]$RunId
+    )
+    $expectedStatus = "ZPRACOVÁVÁ SE | $RunId"
+    $matchApplicant = if ($Group.PSObject.Properties['MatchApplicant']) { [string]$Group.MatchApplicant } else { [string]$Group.Applicant }
+    $applicantKey = ([regex]::Replace($matchApplicant, '\s+', ' ')).Trim().ToLowerInvariant()
+    $newReadyRows = @($FreshRows | Where-Object {
+        ([string]$_.Status) -ceq 'K ODESLÁNÍ' -and
+        ([regex]::Replace(([string]$_.Applicant), '\s+', ' ')).Trim().ToLowerInvariant() -ceq $applicantKey
+    })
+    if ($newReadyRows.Count -gt 0) {
+        throw "Po rezervaci přibyly připravené řádky pro '$($Group.Applicant)'. Před pokračováním je nutná nová kontrola."
+    }
+    $claimed = @($FreshRows | Where-Object { ([string]$_.Status) -ceq $expectedStatus })
+    $expected = Get-SiolaExpectedClaimFingerprints -Group $Group -ClaimSourceRows $ClaimSourceRows -RunId $RunId
+    $expectedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($fingerprint in $expected) { $null = $expectedSet.Add($fingerprint) }
+    $matching = @($claimed | Where-Object { $expectedSet.Contains((Get-SiolaRowApprovalFingerprint $_)) })
+    $actual = [string[]]@($matching | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
+    if ($expected.Count -ne $actual.Count -or ($expected -join "`n") -cne ($actual -join "`n")) {
+        throw "Rezervace řádků pro '$($Group.Applicant)' se změnila. Před dalším krokem zkontrolujte tabulku a Odeslanou poštu."
+    }
+    return [pscustomobject]@{ RowNumbers = [int[]]@($matching.RowNumber); Rows = [object[]]$matching }
+}
+
+function Get-SiolaVerifiedSheetRows {
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$WorksheetName,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)]$ExpectedHeaders
+    )
+    $result = Get-SiolaSheetValues -SpreadsheetId $SpreadsheetId -WorksheetName $WorksheetName -AccessToken $AccessToken
+    $values = [object[]]$result.Rows
+    $actualHeaders = Get-HeaderMap ([object[]]$values[0])
+    Assert-SiolaHeaderLayout -Expected $ExpectedHeaders -Actual $actualHeaders
+    return @(ConvertTo-SourceRows -Values $values -Headers $actualHeaders)
 }
 
 function Write-SiolaPreviewReport {
@@ -191,6 +297,9 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
 $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $effectiveMode = $(if ($Mode) { $Mode.ToUpperInvariant() } else { ([string]$config.mode).ToUpperInvariant() })
 if ($effectiveMode -notin @('VALIDATE', 'TEST', 'LIVE')) { throw 'Mode musí být VALIDATE, TEST nebo LIVE.' }
+if ($ApprovalDigestPath -and $effectiveMode -ne 'VALIDATE') {
+    throw 'ApprovalDigestPath lze použít pouze v režimu VALIDATE.'
+}
 foreach ($name in @('spreadsheetId', 'worksheetName', 'credentialsPath', 'outlookSenderSmtpAddress')) {
     if (-not ([string]$config.$name).Trim()) { throw "V konfiguraci chybí $name." }
 }
@@ -224,6 +333,23 @@ if ($effectiveMode -eq 'TEST' -and (-not $config.PSObject.Properties['testBatchS
         [int]$config.testBatchSize -lt 1)) {
     throw 'testBatchSize musí být alespoň 1.'
 }
+$configuredBatchSize = if ($config.PSObject.Properties['batchSize']) { [int]$config.batchSize } else { 50 }
+$delaySeconds = if ($config.PSObject.Properties['delaySeconds']) { [int]$config.delaySeconds } else { 3 }
+$confirmationTimeout = if ($config.PSObject.Properties['sendConfirmationTimeoutSeconds']) {
+    [int]$config.sendConfirmationTimeoutSeconds
+}
+else { 120 }
+$runDeadlineMinutes = if ($config.PSObject.Properties['runDeadlineMinutes']) { [int]$config.runDeadlineMinutes } else { 300 }
+if ($configuredBatchSize -lt 1 -or $configuredBatchSize -gt 100) { throw 'batchSize musí být mezi 1 a 100.' }
+if ($delaySeconds -lt 0 -or $delaySeconds -gt 300) { throw 'delaySeconds musí být mezi 0 a 300.' }
+if ($confirmationTimeout -lt 30 -or $confirmationTimeout -gt 600) {
+    throw 'sendConfirmationTimeoutSeconds musí být mezi 30 a 600.'
+}
+if ($runDeadlineMinutes -lt 30 -or $runDeadlineMinutes -gt 330) {
+    throw 'runDeadlineMinutes musí být mezi 30 a 330.'
+}
+$runDeadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes($runDeadlineMinutes)
+Set-SiolaGoogleRequestDeadline -DeadlineUtc $runDeadlineUtc
 
 $dataDirectory = [Environment]::ExpandEnvironmentVariables([string]$config.dataDirectory)
 if (-not $dataDirectory) { throw 'V konfiguraci chybí dataDirectory.' }
@@ -231,13 +357,20 @@ $logDirectory = Join-Path $dataDirectory 'logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $retentionDays = if ($config.PSObject.Properties['logRetentionDays']) { [int]$config.logRetentionDays } else { 90 }
 if ($retentionDays -lt 7) { throw 'logRetentionDays musí být alespoň 7.' }
+$previewRetentionDays = if ($config.PSObject.Properties['previewRetentionDays']) {
+    [int]$config.previewRetentionDays
+}
+else { 2 }
+if ($previewRetentionDays -lt 1 -or $previewRetentionDays -gt 7) {
+    throw 'previewRetentionDays musí být mezi 1 a 7.'
+}
 Get-ChildItem -LiteralPath $logDirectory -Filter 'run-*.jsonl' -File -ErrorAction SilentlyContinue |
     Where-Object LastWriteTimeUtc -lt ([DateTime]::UtcNow.AddDays(-$retentionDays)) |
     Remove-Item -Force -ErrorAction SilentlyContinue
 $previewDirectory = Join-Path $dataDirectory 'previews'
 if (Test-Path -LiteralPath $previewDirectory -PathType Container) {
     Get-ChildItem -LiteralPath $previewDirectory -Filter 'preview-*.html' -File -ErrorAction SilentlyContinue |
-        Where-Object LastWriteTimeUtc -lt ([DateTime]::UtcNow.AddDays(-$retentionDays)) |
+        Where-Object LastWriteTimeUtc -lt ([DateTime]::UtcNow.AddDays(-$previewRetentionDays)) |
         Remove-Item -Force -ErrorAction SilentlyContinue
 }
 $script:LogPath = Join-Path $logDirectory "run-$($script:RunId).jsonl"
@@ -269,6 +402,9 @@ catch {
 
 $lockStream = $null
 $outlook = $null
+$tokenSession = $null
+$credentialsPath = ''
+$leaseAcquired = $false
 try {
     try {
         $lockStream = [IO.File]::Open($lockPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
@@ -282,9 +418,14 @@ try {
     $credentialsPath = [Environment]::ExpandEnvironmentVariables([string]$config.credentialsPath)
     $tokenSession = Get-GoogleServiceAccountToken -CredentialsPath $credentialsPath -AsSession
     $accessToken = [string]$tokenSession.AccessToken
+    $sheetId = Get-SiolaWorksheetId -SpreadsheetId $config.spreadsheetId `
+        -WorksheetName $config.worksheetName -AccessToken $accessToken
     if ($effectiveMode -eq 'LIVE') {
         Assert-SiolaAutomationOwner -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
             -InstallationId ([string]$config.installationId)
+        $null = Enter-SiolaAutomationLease -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+            -InstallationId ([string]$config.installationId) -RunId $script:RunId
+        $leaseAcquired = $true
     }
     $sheetResult = Get-SiolaSheetValues -SpreadsheetId $config.spreadsheetId `
         -WorksheetName $config.worksheetName -AccessToken $accessToken
@@ -293,7 +434,7 @@ try {
     $sourceRows = @(ConvertTo-SourceRows -Values $values -Headers $headers)
 
     # VALIDATE and TEST inspect every eligible applicant. TEST limits only actual test sends.
-    $batchSize = if ($effectiveMode -eq 'LIVE') { [int]$config.batchSize } else { [int]::MaxValue }
+    $batchSize = if ($effectiveMode -eq 'LIVE') { $configuredBatchSize } else { [int]::MaxValue }
     $batch = Get-SiolaPreparedBatch -Rows $sourceRows -Mode $effectiveMode -RunId $script:RunId `
         -BatchSize $batchSize -TestRecipient ([string]$config.testRecipient) -Signature $config.signature
 
@@ -315,17 +456,24 @@ try {
         $batch | Select-Object Mode, EligibleRowCount, SelectedApplicantCount, JobCount, ValidationErrorCount |
             Format-List | Out-Host
         if ($batch.ValidationErrorCount -gt 0) { throw 'Kontrola našla chyby. Tabulka nebyla změněna.' }
+        if ($ApprovalDigestPath) {
+            Get-SiolaBatchApprovalFingerprint -Batch $batch | Set-Content -LiteralPath $ApprovalDigestPath -Encoding UTF8
+        }
         Write-SiolaLog INFO VALIDATION_OK @{}
         return
     }
 
-    $confirmationTimeout = if ($config.PSObject.Properties['sendConfirmationTimeoutSeconds']) {
-        [int]$config.sendConfirmationTimeoutSeconds
-    }
-    else { 120 }
-
     if ($effectiveMode -eq 'TEST') {
         $receiptPath = Join-Path $dataDirectory 'test-success.json'
+        if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
+            try {
+                $previousReceipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([string]$previousReceipt.previewPath) {
+                    Remove-Item -LiteralPath ([string]$previousReceipt.previewPath) -Force -ErrorAction SilentlyContinue
+                }
+            }
+            catch { Write-SiolaLog WARNING PREVIOUS_PREVIEW_CLEANUP_FAILED @{} }
+        }
         Remove-Item -LiteralPath $receiptPath -Force -ErrorAction SilentlyContinue
         if ($batch.ValidationErrorCount -gt 0) { throw 'TEST byl zastaven kvůli chybám validace. Tabulka nebyla změněna.' }
         if ($batch.JobCount -eq 0) { Write-SiolaLog INFO NOTHING_TO_TEST @{}; return }
@@ -343,7 +491,7 @@ try {
                     -ConfirmationTimeoutSeconds $confirmationTimeout
                 $sentJobs++
                 Write-SiolaLog INFO TEST_SENT_CONFIRMED @{ jobId = $job.JobId; role = $job.Role; intendedTo = $job.IntendedTo }
-                Start-Sleep -Seconds ([int]$config.delaySeconds)
+                Start-Sleep -Seconds $delaySeconds
             }
         }
         $receipt = [ordered]@{
@@ -357,6 +505,8 @@ try {
             previewPath = $previewPath
             previewJobs = [int]$batch.JobCount
             sentTestJobs = $sentJobs
+            approvalDigest = Get-SiolaBatchApprovalFingerprint -Batch $batch
+            runtimeFingerprint = Get-SiolaRuntimeFingerprint -RootPath $PSScriptRoot
         }
         $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
         try { Start-Process -FilePath $previewPath | Out-Null } catch {}
@@ -365,96 +515,139 @@ try {
     }
 
     # LIVE records invalid/completed groups, then preflights Outlook before claiming any sendable group.
-    $updates = [Collections.Generic.List[object]]::new()
-    $rowByNumber = @{}
-    foreach ($row in $sourceRows) { $rowByNumber[[int]$row.RowNumber] = $row }
     $nonSendGroups = @($batch.InvalidGroups) + @($batch.CompletedGroups)
-    if ($nonSendGroups.Count -gt 0) {
-        $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
-        $statusFreshResult = Get-SiolaSheetValues -SpreadsheetId $config.spreadsheetId `
-            -WorksheetName $config.worksheetName -AccessToken $accessToken
-        $statusFreshValues = [object[]]$statusFreshResult.Rows
-        $statusFreshHeaders = Get-HeaderMap ([object[]]$statusFreshValues[0])
-        foreach ($headerName in $headers.Keys) {
-            if (-not $statusFreshHeaders.ContainsKey($headerName) -or
-                $statusFreshHeaders[$headerName] -ne $headers[$headerName]) {
-                throw "Pořadí sloupců se během běhu změnilo ($headerName). LIVE byl zastaven bez zápisu stavů."
+    foreach ($nonSendGroup in $nonSendGroups) {
+        $targetPrefix = "$($script:RunId)|status|$([guid]::NewGuid().ToString('N'))"
+        $createdTargets = @()
+        $locatedTargets = @()
+        try {
+            $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
+            $statusFreshRows = @(Get-SiolaVerifiedSheetRows -SpreadsheetId $config.spreadsheetId `
+                -WorksheetName $config.worksheetName -AccessToken $accessToken -ExpectedHeaders $headers)
+            $resolved = Resolve-SiolaFreshEligibleGroup -Group $nonSendGroup -FreshRows $statusFreshRows
+            $createdTargets = @(New-SiolaRowTargets -SpreadsheetId $config.spreadsheetId -SheetId $sheetId `
+                -AccessToken $accessToken -RowNumbers ([int[]]$resolved.RowNumbers) -TargetPrefix $targetPrefix)
+
+            $statusFreshRows = @(Get-SiolaVerifiedSheetRows -SpreadsheetId $config.spreadsheetId `
+                -WorksheetName $config.worksheetName -AccessToken $accessToken -ExpectedHeaders $headers)
+            $locatedTargets = @(Get-SiolaVerifiedRowTargets -TargetPrefix $targetPrefix `
+                -ExpectedTargets $createdTargets -FreshRows $statusFreshRows `
+                -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken)
+            Assert-SiolaTargetApproval -Group $nonSendGroup -Targets $locatedTargets
+
+            $isInvalid = $batch.InvalidGroups -contains $nonSendGroup
+            $detail = if ($isInvalid) { Get-ShortFailure ($nonSendGroup.Errors -join '; ') } else { '' }
+            Set-SiolaTargetUpdates -Targets $locatedTargets -SpreadsheetId $config.spreadsheetId `
+                -AccessToken $accessToken -BuildUpdates {
+                    param($target)
+                    if (-not $isInvalid) {
+                        return ,(New-TargetCellUpdate $headers['Stav'] 'ODESLÁNO')
+                    }
+                    $cellUpdates = [Collections.Generic.List[object]]::new()
+                    $cellUpdates.Add((New-TargetCellUpdate $headers['Stav'] 'CHYBA VALIDACE'))
+                    if (-not (Test-SiolaSentStatus $target.Row.MayorStatus)) {
+                        $cellUpdates.Add((New-TargetCellUpdate $headers['Stav STAROSTA'] "CHYBA VALIDACE | $detail"))
+                    }
+                    if ([string]$target.Row.SecretaryEmail -and -not (Test-SiolaSentStatus $target.Row.SecretaryStatus)) {
+                        $cellUpdates.Add((New-TargetCellUpdate $headers['Stav TAJEMNÍK'] "CHYBA VALIDACE | $detail"))
+                    }
+                    return @($cellUpdates)
+                }
+        }
+        finally {
+            if ($targetPrefix) {
+                try {
+                    $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
+                    $cleanupTargets = @(Get-SiolaRowTargets -SpreadsheetId $config.spreadsheetId `
+                        -AccessToken $accessToken -TargetPrefix $targetPrefix)
+                    Remove-SiolaRowTargets -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+                        -Targets $cleanupTargets
+                }
+                catch { Write-SiolaLog WARNING ROW_TARGET_CLEANUP_FAILED @{ prefix = $targetPrefix } }
             }
         }
-        $statusFreshRows = @(ConvertTo-SourceRows -Values $statusFreshValues -Headers $statusFreshHeaders)
-        $statusFreshByNumber = @{}
-        foreach ($statusFreshRow in $statusFreshRows) {
-            $statusFreshByNumber[[int]$statusFreshRow.RowNumber] = $statusFreshRow
-        }
-        foreach ($nonSendGroup in $nonSendGroups) {
-            Assert-SiolaGroupUnchanged -Group $nonSendGroup -OriginalRows $rowByNumber -FreshRows $statusFreshByNumber
-        }
-    }
-    foreach ($invalid in $batch.InvalidGroups) {
-        $detail = Get-ShortFailure ($invalid.Errors -join '; ')
-        foreach ($rowNumber in $invalid.RowNumbers) {
-            $row = $rowByNumber[$rowNumber]
-            $updates.Add((New-CellUpdate $rowNumber $headers['Stav'] 'CHYBA VALIDACE'))
-            if (-not (Test-SiolaSentStatus $row.MayorStatus)) {
-                $updates.Add((New-CellUpdate $rowNumber $headers['Stav STAROSTA'] "CHYBA VALIDACE | $detail"))
-            }
-            if ([string]$row.SecretaryEmail -and -not (Test-SiolaSentStatus $row.SecretaryStatus)) {
-                $updates.Add((New-CellUpdate $rowNumber $headers['Stav TAJEMNÍK'] "CHYBA VALIDACE | $detail"))
-            }
-        }
-    }
-    foreach ($group in $batch.CompletedGroups) {
-        foreach ($rowNumber in $group.RowNumbers) {
-            $updates.Add((New-CellUpdate $rowNumber $headers['Stav'] 'ODESLÁNO'))
-        }
-    }
-    if ($updates.Count) {
-        $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
-        Set-SiolaSheetCells -SpreadsheetId $config.spreadsheetId -WorksheetName $config.worksheetName `
-            -AccessToken $accessToken -Updates @($updates)
     }
 
     if ($batch.JobCount -eq 0) {
         Write-SiolaLog INFO NOTHING_TO_SEND @{}
-        if ($batch.ValidationErrorCount -gt 0) { Show-SiolaFailureNotification 'Tabulka obsahuje chyby validace.' }
+        if ($batch.ValidationErrorCount -gt 0) {
+            throw "Tabulka obsahuje $($batch.ValidationErrorCount) chyb validace."
+        }
         return
     }
 
     $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
+    [int]$processedJobs = 0
+    [bool]$deferredForDeadline = $false
     foreach ($group in $batch.Groups) {
+        # After a row is marked, Google writes are not retried. Budget every remaining
+        # 60-second request, Outlook confirmation, and five minutes for local cleanup.
+        $googleCallBudgetSeconds = (([int]$group.Jobs.Count * 6) + 21) * 60
+        $worstCaseGroupSeconds = ([int]$group.Jobs.Count * ($confirmationTimeout + $delaySeconds)) + `
+            $googleCallBudgetSeconds + 300
+        if ([DateTimeOffset]::UtcNow.AddSeconds($worstCaseGroupSeconds) -gt $runDeadlineUtc) {
+            $deferredForDeadline = $true
+            Write-SiolaLog WARNING RUN_DEADLINE_REACHED @{
+                applicant = $group.Applicant
+                remainingJobs = $batch.JobCount - $processedJobs
+            }
+            break
+        }
+        $targetPrefix = ''
+        $createdTargets = @()
+        Set-SiolaGoogleRequestMaxAttempts -MaxAttempts 1
+        try {
         $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
         Assert-SiolaAutomationOwner -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
             -InstallationId ([string]$config.installationId)
+        $null = Update-SiolaAutomationLease -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+            -InstallationId ([string]$config.installationId) -RunId $script:RunId
 
         # Re-read and compare every email-driving value immediately before this applicant is claimed.
-        $freshResult = Get-SiolaSheetValues -SpreadsheetId $config.spreadsheetId `
-            -WorksheetName $config.worksheetName -AccessToken $accessToken
-        $freshValues = [object[]]$freshResult.Rows
-        $freshHeaders = Get-HeaderMap ([object[]]$freshValues[0])
-        foreach ($headerName in $headers.Keys) {
-            if (-not $freshHeaders.ContainsKey($headerName) -or $freshHeaders[$headerName] -ne $headers[$headerName]) {
-                throw "Pořadí sloupců se během běhu změnilo ($headerName). LIVE byl zastaven."
+        $freshSourceRows = @(Get-SiolaVerifiedSheetRows -SpreadsheetId $config.spreadsheetId `
+            -WorksheetName $config.worksheetName -AccessToken $accessToken -ExpectedHeaders $headers)
+        $freshGroup = Resolve-SiolaFreshEligibleGroup -Group $group -FreshRows $freshSourceRows
+        $targetPrefix = "$($script:RunId)|send|$([guid]::NewGuid().ToString('N'))"
+        $createdTargets = @(New-SiolaRowTargets -SpreadsheetId $config.spreadsheetId -SheetId $sheetId `
+            -AccessToken $accessToken -RowNumbers ([int[]]$freshGroup.RowNumbers) -TargetPrefix $targetPrefix)
+        $markedFreshRows = @(Get-SiolaVerifiedSheetRows -SpreadsheetId $config.spreadsheetId `
+            -WorksheetName $config.worksheetName -AccessToken $accessToken -ExpectedHeaders $headers)
+        $locatedTargets = @(Get-SiolaVerifiedRowTargets -TargetPrefix $targetPrefix `
+            -ExpectedTargets $createdTargets -FreshRows $markedFreshRows `
+            -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken)
+        Assert-SiolaTargetApproval -Group $group -Targets $locatedTargets
+        $claimSourceRows = [object[]]@($locatedTargets.Row)
+        Set-SiolaTargetUpdates -Targets $locatedTargets -SpreadsheetId $config.spreadsheetId `
+            -AccessToken $accessToken -BuildUpdates {
+                param($target)
+                $claimUpdates = [Collections.Generic.List[object]]::new()
+                $claimUpdates.Add((New-TargetCellUpdate $headers['Stav'] "ZPRACOVÁVÁ SE | $($script:RunId)"))
+                foreach ($claimJob in $group.Jobs) {
+                    $statusColumn = if ($claimJob.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
+                    $claimUpdates.Add((New-TargetCellUpdate $headers[$statusColumn] "ZPRACOVÁVÁ SE | $($claimJob.JobId)"))
+                }
+                return @($claimUpdates)
             }
-        }
-        $freshSourceRows = @(ConvertTo-SourceRows -Values $freshValues -Headers $freshHeaders)
-        $freshByNumber = @{}
-        foreach ($freshRow in $freshSourceRows) { $freshByNumber[[int]$freshRow.RowNumber] = $freshRow }
-        Assert-SiolaGroupUnchanged -Group $group -OriginalRows $rowByNumber -FreshRows $freshByNumber
-
-        $claims = [Collections.Generic.List[object]]::new()
-        foreach ($rowNumber in $group.RowNumbers) {
-            $claims.Add((New-CellUpdate $rowNumber $headers['Stav'] "ZPRACOVÁVÁ SE | $($script:RunId)"))
-            foreach ($job in $group.Jobs) {
-                $statusColumn = if ($job.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
-                $claims.Add((New-CellUpdate $rowNumber $headers[$statusColumn] "ZPRACOVÁVÁ SE | $($job.JobId)"))
-            }
-        }
-        Set-SiolaSheetCells -SpreadsheetId $config.spreadsheetId -WorksheetName $config.worksheetName `
-            -AccessToken $accessToken -Updates @($claims)
-        Write-SiolaLog INFO CLAIMED @{ applicant = $group.Applicant; rows = $group.RowNumbers; jobs = $group.Jobs.Count }
+        Write-SiolaLog INFO CLAIMED @{ applicant = $group.Applicant; rows = $locatedTargets.RowNumber; jobs = $group.Jobs.Count }
 
         $outcomes = @{}
         foreach ($job in $group.Jobs) {
+            $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
+            Assert-SiolaAutomationOwner -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+                -InstallationId ([string]$config.installationId)
+            $null = Update-SiolaAutomationLease -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+                -InstallationId ([string]$config.installationId) -RunId $script:RunId
+            $claimRows = @(Get-SiolaVerifiedSheetRows -SpreadsheetId $config.spreadsheetId `
+                -WorksheetName $config.worksheetName -AccessToken $accessToken -ExpectedHeaders $headers)
+            $currentTargets = @(Get-SiolaVerifiedRowTargets -TargetPrefix $targetPrefix `
+                -ExpectedTargets $createdTargets -FreshRows $claimRows `
+                -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken)
+            $verifiedClaim = Resolve-SiolaClaimedGroup -Group $group -ClaimSourceRows $claimSourceRows `
+                -FreshRows $claimRows -RunId $script:RunId
+            $targetRows = @($currentTargets.RowNumber | Sort-Object)
+            if (($targetRows -join ',') -cne (@($verifiedClaim.RowNumbers | Sort-Object) -join ',')) {
+                throw 'Rezervace se přesunula na jiné řádky než dočasné značky. Odesílání bylo zastaveno.'
+            }
             try {
                 Send-SiolaOutlookJob -OutlookContext $outlook -Job $job `
                     -ConfirmationTimeoutSeconds $confirmationTimeout
@@ -474,25 +667,27 @@ try {
                     jobId = $job.JobId; role = $job.Role; applicant = $job.Applicant; detail = $outcomes[$job.Role].Detail
                 }
             }
-            Start-Sleep -Seconds ([int]$config.delaySeconds)
+            $processedJobs++
+            Start-Sleep -Seconds $delaySeconds
         }
 
-        $final = [Collections.Generic.List[object]]::new()
+        $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
+        Assert-SiolaAutomationOwner -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+            -InstallationId ([string]$config.installationId)
+        $null = Update-SiolaAutomationLease -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+            -InstallationId ([string]$config.installationId) -RunId $script:RunId
+        $finalRows = @(Get-SiolaVerifiedSheetRows -SpreadsheetId $config.spreadsheetId `
+            -WorksheetName $config.worksheetName -AccessToken $accessToken -ExpectedHeaders $headers)
+        $finalTargets = @(Get-SiolaVerifiedRowTargets -TargetPrefix $targetPrefix `
+            -ExpectedTargets $createdTargets -FreshRows $finalRows `
+            -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken)
+        $finalGroup = Resolve-SiolaClaimedGroup -Group $group -ClaimSourceRows $claimSourceRows `
+            -FreshRows $finalRows -RunId $script:RunId
+        if ((@($finalTargets.RowNumber | Sort-Object) -join ',') -cne (@($finalGroup.RowNumbers | Sort-Object) -join ',')) {
+            throw 'Výsledné řádky neodpovídají dočasným značkám. Zkontrolujte Odeslanou poštu.'
+        }
+
         $sentAt = [DateTime]::Now.ToOADate()
-        foreach ($outcome in $outcomes.Values) {
-            $statusColumn = if ($outcome.Job.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
-            $dateColumn = if ($outcome.Job.Role -eq 'STAROSTA') { 'Datum e-mailu STAROSTA' } else { 'Datum e-mailu TAJEMNÍK' }
-            foreach ($rowNumber in $group.RowNumbers) {
-                if ($outcome.Success) {
-                    $final.Add((New-CellUpdate $rowNumber $headers[$statusColumn] "ODESLÁNO | $($outcome.Job.JobId)"))
-                    $final.Add((New-CellUpdate $rowNumber $headers[$dateColumn] $sentAt))
-                }
-                else {
-                    $final.Add((New-CellUpdate $rowNumber $headers[$statusColumn] "CHYBA | $($outcome.Detail)"))
-                }
-            }
-        }
-
         $mayorSent = $group.MayorAlreadySent -or ($outcomes.ContainsKey('STAROSTA') -and $outcomes['STAROSTA'].Success)
         $secretarySent = (-not $group.SecretaryRequired) -or $group.SecretaryAlreadySent -or
             ($outcomes.ContainsKey('TAJEMNIK') -and $outcomes['TAJEMNIK'].Success)
@@ -501,14 +696,26 @@ try {
         $overall = if ($mayorSent -and $secretarySent) { 'ODESLÁNO' } `
             elseif ($anySent) { 'ČÁSTEČNĚ ODESLÁNO' } `
             elseif ($anyFailed) { 'CHYBA' } else { 'ZPRACOVÁVÁ SE' }
-        foreach ($rowNumber in $group.RowNumbers) {
-            $final.Add((New-CellUpdate $rowNumber $headers['Stav'] $overall))
-        }
-
         try {
             $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
-            Set-SiolaSheetCells -SpreadsheetId $config.spreadsheetId -WorksheetName $config.worksheetName `
-                -AccessToken $accessToken -Updates @($final)
+            Set-SiolaTargetUpdates -Targets $finalTargets -SpreadsheetId $config.spreadsheetId `
+                -AccessToken $accessToken -BuildUpdates {
+                    param($target)
+                    $finalUpdates = [Collections.Generic.List[object]]::new()
+                    foreach ($outcome in $outcomes.Values) {
+                        $statusColumn = if ($outcome.Job.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
+                        $dateColumn = if ($outcome.Job.Role -eq 'STAROSTA') { 'Datum e-mailu STAROSTA' } else { 'Datum e-mailu TAJEMNÍK' }
+                        if ($outcome.Success) {
+                            $finalUpdates.Add((New-TargetCellUpdate $headers[$statusColumn] "ODESLÁNO | $($outcome.Job.JobId)"))
+                            $finalUpdates.Add((New-TargetCellUpdate $headers[$dateColumn] $sentAt))
+                        }
+                        else {
+                            $finalUpdates.Add((New-TargetCellUpdate $headers[$statusColumn] "CHYBA | $($outcome.Detail)"))
+                        }
+                    }
+                    $finalUpdates.Add((New-TargetCellUpdate $headers['Stav'] $overall))
+                    return @($finalUpdates)
+                }
         }
         catch {
             Write-SiolaLog CRITICAL RESULT_WRITE_FAILED @{
@@ -519,15 +726,34 @@ try {
             throw
         }
         Write-SiolaLog INFO GROUP_COMPLETE @{ applicant = $group.Applicant; status = $overall }
+        }
+        finally {
+            if ($targetPrefix) {
+                try {
+                    $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
+                    $cleanupTargets = @(Get-SiolaRowTargets -SpreadsheetId $config.spreadsheetId `
+                        -AccessToken $accessToken -TargetPrefix $targetPrefix)
+                    Remove-SiolaRowTargets -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+                        -Targets $cleanupTargets
+                }
+                catch { Write-SiolaLog WARNING ROW_TARGET_CLEANUP_FAILED @{ prefix = $targetPrefix } }
+            }
+            Set-SiolaGoogleRequestMaxAttempts -MaxAttempts 4
+        }
     }
-    Write-SiolaLog INFO COMPLETE @{ jobs = $batch.JobCount; validationErrors = $batch.ValidationErrorCount }
+    Write-SiolaLog INFO COMPLETE @{
+        jobs = $processedJobs
+        deferredJobs = $(if ($deferredForDeadline) { $batch.JobCount - $processedJobs } else { 0 })
+        validationErrors = $batch.ValidationErrorCount
+    }
+    $resultLabel = if ($batch.ValidationErrorCount -gt 0) { 'CHYBA VALIDACE' } else { 'OK' }
     Set-Content -LiteralPath (Join-Path $dataDirectory 'LAST_RESULT.txt') `
-        -Value "OK | $([DateTimeOffset]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz')) | zpráv: $($batch.JobCount)" -Encoding UTF8
-    if ($script:LogDegraded) {
-        Show-SiolaFailureNotification 'Běh dokončil práci, ale provozní log nebylo možné úplně zapsat.'
+        -Value "$resultLabel | $([DateTimeOffset]::Now.ToString('yyyy-MM-dd HH:mm:ss zzz')) | zpráv: $processedJobs" -Encoding UTF8
+    if ($batch.ValidationErrorCount -gt 0) {
+        throw "Běh dokončil odesílání, ale našel $($batch.ValidationErrorCount) chyb validace."
     }
-    elseif ($batch.ValidationErrorCount -gt 0) {
-        Show-SiolaFailureNotification "Běh dokončil odesílání, ale našel $($batch.ValidationErrorCount) chyb validace."
+    elseif ($script:LogDegraded) {
+        Show-SiolaFailureNotification 'Běh dokončil práci, ale provozní log nebylo možné úplně zapsat.'
     }
     else {
         Remove-Item -LiteralPath (Join-Path $dataDirectory 'ACTION_REQUIRED.txt') -Force -ErrorAction SilentlyContinue
@@ -540,6 +766,14 @@ catch {
     throw
 }
 finally {
+    if ($leaseAcquired -and $null -ne $tokenSession -and $credentialsPath) {
+        try {
+            $accessToken = Get-SiolaFreshAccessToken -Session $tokenSession -CredentialsPath $credentialsPath
+            Exit-SiolaAutomationLease -SpreadsheetId $config.spreadsheetId -AccessToken $accessToken `
+                -InstallationId ([string]$config.installationId) -RunId $script:RunId
+        }
+        catch { Write-Warning 'Běhový zámek se nepodařilo odstranit; automaticky vyprší.' }
+    }
     Disconnect-SiolaOutlook $outlook
     if ($null -ne $lockStream) {
         $lockStream.Dispose()

@@ -43,7 +43,8 @@ test("HTML contract retains Calibri 12 and the required bold question", () => {
 });
 
 test("LIVE connects Outlook before any claim is written", () => {
-  const claimPosition = runner.indexOf("Set-SiolaSheetCells -SpreadsheetId", runner.indexOf("$claims"));
+  const sendGroup = runner.indexOf("$freshGroup = Resolve-SiolaFreshEligibleGroup");
+  const claimPosition = runner.indexOf("Set-SiolaTargetUpdates -Targets $locatedTargets", sendGroup);
   const outlookPosition = runner.indexOf("Connect-SiolaOutlook", runner.indexOf("# LIVE"));
   assert.ok(claimPosition >= 0);
   assert.ok(outlookPosition >= 0);
@@ -58,7 +59,8 @@ test("LIVE verifies every email-driving row using a complete fingerprint", () =>
   for (const field of ["Call", "RmNumber", "Applicant", "ProjectName", "Grant", "SecretarySalutation", "SecretaryEmail", "MayorSalutation", "MayorEmail", "Status", "MayorStatus", "SecretaryStatus"]) {
     assert.match(runner, new RegExp(`${field} =`));
   }
-  assert.match(runner, /Assert-SiolaGroupUnchanged/);
+  assert.match(runner, /Resolve-SiolaFreshEligibleGroup/);
+  assert.match(runner, /Resolve-SiolaClaimedGroup/);
 });
 
 test("the Google Sheet is bound to one installation", () => {
@@ -121,14 +123,15 @@ test("Google access tokens are refreshed during LIVE processing", () => {
 
 test("Google HTTP calls have bounded timeouts and quota-aware 429 delay", () => {
   assert.match(google, /-TimeoutSec 60/);
-  assert.match(google, /TimeoutSec = 60/);
+  assert.match(google, /TimeoutSec = \[math\]::Max\(1, \[math\]::Min\(60, \$remainingSeconds\)\)/);
   assert.match(google, /\$status -eq 429\) \{ 65 \}/);
   assert.match(google, /RetryAfter/);
+  assert.match(google, /Časový limit běhu vypršel během opakování/);
 });
 
 test("non-send status writes receive the same freshness protection", () => {
   assert.match(runner, /\$nonSendGroups/);
-  assert.match(runner, /Assert-SiolaGroupUnchanged -Group \$nonSendGroup/);
+  assert.match(runner, /Resolve-SiolaFreshEligibleGroup -Group \$nonSendGroup/);
 });
 
 test("Outlook verifies that SendUsingAccount stuck", () => {
@@ -182,4 +185,89 @@ test("bootstrap failures create an operator notification", () => {
 
 test("LIVE gate rejects a zero-message TEST receipt", () => {
   assert.match(enableLive, /receipt\.sentTestJobs -lt 1/);
+});
+
+test("LIVE approval is bound to reviewed content and runtime files", () => {
+  assert.match(runner, /approvalDigest = Get-SiolaBatchApprovalFingerprint/);
+  assert.match(runner, /runtimeFingerprint = Get-SiolaRuntimeFingerprint/);
+  assert.match(enableLive, /receipt\.approvalDigest -cne \$currentApprovalDigest/);
+  assert.match(enableLive, /receipt\.runtimeFingerprint -cne \$currentRuntimeFingerprint/);
+});
+
+test("LIVE owns and renews a distributed lease before sending", () => {
+  assert.match(google, /siola_automation_lease/);
+  assert.match(runner, /Enter-SiolaAutomationLease/);
+  const send = runner.indexOf("Send-SiolaOutlookJob", runner.indexOf("$outcomes = @{}"));
+  const renew = runner.lastIndexOf("Update-SiolaAutomationLease", send);
+  const claimCheck = runner.lastIndexOf("Resolve-SiolaClaimedGroup", send);
+  assert.ok(renew >= 0 && renew < send);
+  assert.ok(claimCheck >= 0 && claimCheck < send);
+  const transfer = google.indexOf("function Transfer-SiolaAutomationOwner");
+  assert.ok(google.indexOf("Enter-SiolaAutomationLease", transfer) > transfer);
+});
+
+test("claims and final writes follow unique row metadata instead of A1 coordinates", () => {
+  assert.match(google, /metadataKey = 'siola_row_target'/);
+  assert.match(google, /batchUpdateByDataFilter/);
+  assert.match(google, /locationType = 'ROW'/);
+  assert.match(runner, /Get-SiolaVerifiedRowTargets/);
+  assert.match(runner, /Assert-SiolaTargetApproval/);
+  const finalResolve = runner.indexOf("$finalTargets = @(");
+  const finalWrite = runner.indexOf("Set-SiolaTargetUpdates -Targets $finalTargets", finalResolve);
+  assert.ok(finalResolve >= 0 && finalWrite > finalResolve);
+  assert.doesNotMatch(runner, /Set-SiolaSheetCells/);
+});
+
+test("expired leases are replaced with a new immutable metadata record", () => {
+  const enter = google.slice(google.indexOf("function Enter-SiolaAutomationLease"), google.indexOf("function Update-SiolaAutomationLease"));
+  assert.match(enter, /deleteDeveloperMetadata/);
+  assert.match(enter, /createDeveloperMetadata/);
+  assert.doesNotMatch(enter, /Set-SiolaAutomationLeaseValue/);
+  assert.match(google, /Get-SiolaAutomationLeases/);
+  assert.match(google, /AddSeconds\(180\)/);
+  assert.match(google, /Set-SiolaAutomationLeaseValue[\s\S]*?-MaxAttempts 1/);
+});
+
+test("configuration bounds and scheduler deadline fail safely", () => {
+  assert.match(runner, /runDeadlineMinutes musí být mezi 30 a 330/);
+  assert.match(runner, /RUN_DEADLINE_REACHED/);
+  assert.match(installer, /ExecutionTimeLimit \(New-TimeSpan -Hours 6\)/);
+  assert.match(runner, /googleCallBudgetSeconds/);
+  assert.match(runner, /Set-SiolaGoogleRequestMaxAttempts -MaxAttempts 1/);
+});
+
+test("installation ACLs protect operational data and key cleanup is explicit", () => {
+  assert.match(installer, /icacls\.exe \$InstallDirectory/);
+  assert.match(installer, /\$sourceFullPath -ine \$destinationFullPath/);
+  assert.match(installer, /napište přesně SMAZAT/);
+  assert.doesNotMatch(installer, /SendToRecycleBin/);
+});
+
+test("LIVE removes the reviewed preview and receipt", () => {
+  assert.match(enableLive, /receipt\.previewPath, \$receiptPath/);
+  assert.match(enableLive, /Remove-Item -LiteralPath \$sensitivePath/);
+  assert.match(enableLive, /Get-ChildItem -LiteralPath \$previewDirectory -Filter 'preview-\*\.html'/);
+  assert.match(runner, /previousReceipt\.previewPath/);
+});
+
+test("forced reinstall disables the task and acquires the runtime lock before copying", () => {
+  const disable = installer.indexOf("Disable-ScheduledTask", installer.indexOf("if ($Force"));
+  const lock = installer.indexOf("[IO.File]::Open($existingAutomationLock", disable);
+  const stage = installer.indexOf("$stagingDirectory =", lock);
+  assert.ok(disable >= 0 && lock > disable && stage > lock);
+  assert.match(installer, /State -ceq 'Running'/);
+  assert.match(installer, /Move-Item -LiteralPath \(Join-Path \$stagingDirectory/);
+});
+
+test("send-group row targets are cleaned in finally without masking final status success", () => {
+  assert.match(runner, /finally \{[\s\S]*?ROW_TARGET_CLEANUP_FAILED/);
+  const finalWrite = runner.indexOf("Set-SiolaTargetUpdates -Targets $finalTargets");
+  const resultCatch = runner.indexOf("RESULT_WRITE_FAILED", finalWrite);
+  const cleanup = runner.indexOf("Remove-SiolaRowTargets", resultCatch);
+  assert.ok(finalWrite >= 0 && resultCatch > finalWrite && cleanup > resultCatch);
+});
+
+test("validation errors surface as a failed scheduled run", () => {
+  assert.match(runner, /throw "Běh dokončil odesílání, ale našel/);
+  assert.match(runner, /throw "Tabulka obsahuje \$\(\$batch\.ValidationErrorCount\) chyb validace/);
 });

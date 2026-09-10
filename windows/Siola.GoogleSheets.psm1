@@ -1,4 +1,18 @@
 Set-StrictMode -Version Latest
+$script:RequestDeadlineUtc = [DateTimeOffset]::MaxValue
+$script:RequestMaxAttempts = 4
+
+function Set-SiolaGoogleRequestDeadline {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][DateTimeOffset]$DeadlineUtc)
+    $script:RequestDeadlineUtc = $DeadlineUtc
+}
+
+function Set-SiolaGoogleRequestMaxAttempts {
+    [CmdletBinding()]
+    param([ValidateRange(1, 4)][int]$MaxAttempts)
+    $script:RequestMaxAttempts = $MaxAttempts
+}
 
 function ConvertTo-Base64Url {
     param([byte[]]$Bytes)
@@ -89,14 +103,17 @@ function Invoke-GoogleSheetsRequest {
         [AllowNull()]$Body = $null,
         [int]$MaxAttempts = 4
     )
+    $MaxAttempts = [math]::Min($MaxAttempts, $script:RequestMaxAttempts)
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $remainingSeconds = [math]::Floor(($script:RequestDeadlineUtc - [DateTimeOffset]::UtcNow).TotalSeconds)
+        if ($remainingSeconds -le 0) { throw 'Časový limit běhu vypršel před požadavkem Google Sheets.' }
         try {
             $arguments = @{
                 Method = $Method
                 Uri = $Uri
                 Headers = @{ Authorization = "Bearer $AccessToken" }
                 ErrorAction = 'Stop'
-                TimeoutSec = 60
+                TimeoutSec = [math]::Max(1, [math]::Min(60, $remainingSeconds))
             }
             if ($null -ne $Body) {
                 $arguments.ContentType = 'application/json; charset=utf-8'
@@ -120,9 +137,162 @@ function Invoke-GoogleSheetsRequest {
                 }
                 catch {}
             }
-            Start-Sleep -Seconds ([math]::Min($delaySeconds, 180))
+            $sleepSeconds = [math]::Min($delaySeconds, 180)
+            if ([DateTimeOffset]::UtcNow.AddSeconds($sleepSeconds + 1) -ge $script:RequestDeadlineUtc) {
+                throw 'Časový limit běhu vypršel během opakování požadavku Google Sheets.'
+            }
+            Start-Sleep -Seconds $sleepSeconds
         }
     }
+}
+
+function Get-SiolaWorksheetId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$WorksheetName,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    $fields = [uri]::EscapeDataString('sheets.properties(sheetId,title)')
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/$SpreadsheetId`?fields=$fields"
+    $response = Invoke-GoogleSheetsRequest -Method Get -Uri $uri -AccessToken $AccessToken
+    $matches = @($response.sheets | Where-Object { [string]$_.properties.title -ceq $WorksheetName })
+    if ($matches.Count -ne 1) { throw "List '$WorksheetName' nebyl jednoznačně nalezen." }
+    return [int]$matches[0].properties.sheetId
+}
+
+function New-SiolaRowTargets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][int]$SheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][int[]]$RowNumbers,
+        [Parameter(Mandatory)][string]$TargetPrefix
+    )
+    if ($RowNumbers.Count -eq 0) { return @() }
+    $requests = [Collections.Generic.List[object]]::new()
+    $targets = [Collections.Generic.List[object]]::new()
+    foreach ($rowNumber in $RowNumbers) {
+        $value = "$TargetPrefix|$([guid]::NewGuid().ToString('N'))"
+        $targets.Add([pscustomobject]@{ Value = $value; OriginalRowNumber = $rowNumber })
+        $requests.Add([pscustomobject]@{
+            createDeveloperMetadata = [pscustomobject]@{
+                developerMetadata = [pscustomobject]@{
+                    metadataKey = 'siola_row_target'
+                    metadataValue = $value
+                    location = [pscustomobject]@{
+                        dimensionRange = [pscustomobject]@{
+                            sheetId = $SheetId
+                            dimension = 'ROWS'
+                            startIndex = $rowNumber - 1
+                            endIndex = $rowNumber
+                        }
+                    }
+                    visibility = 'DOCUMENT'
+                }
+            }
+        })
+    }
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
+    $body = [pscustomobject]@{ requests = [object[]]@($requests) }
+    # Creating metadata is not idempotent. Never replay an ambiguous POST.
+    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body -MaxAttempts 1
+    return @($targets)
+}
+
+function Get-SiolaRowTargets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$TargetPrefix
+    )
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/$SpreadsheetId/developerMetadata:search"
+    $body = [pscustomobject]@{
+        dataFilters = [object[]]@([pscustomobject]@{
+            developerMetadataLookup = [pscustomobject]@{
+                metadataKey = 'siola_row_target'
+                visibility = 'DOCUMENT'
+            }
+        })
+    }
+    $response = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
+    $matches = if ($null -ne $response -and $response.PSObject.Properties['matchedDeveloperMetadata']) {
+        @($response.matchedDeveloperMetadata)
+    } else { @() }
+    $targets = @($matches | ForEach-Object {
+        $metadata = $_.developerMetadata
+        $value = [string]$metadata.metadataValue
+        $range = $metadata.location.dimensionRange
+        if ($value.StartsWith("$TargetPrefix|", [StringComparison]::Ordinal) -and
+            [string]$range.dimension -ceq 'ROWS' -and ([int]$range.endIndex - [int]$range.startIndex) -eq 1) {
+            [pscustomobject]@{
+                MetadataId = [int]$metadata.metadataId
+                Value = $value
+                RowNumber = [int]$range.startIndex + 1
+            }
+        }
+    })
+    $duplicates = @($targets | Group-Object Value | Where-Object Count -ne 1)
+    if ($duplicates.Count) { throw 'Dočasné značky řádků nejsou jednoznačné.' }
+    return $targets
+}
+
+function Set-SiolaRowTargetCells {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][object[]]$TargetUpdates
+    )
+    if ($TargetUpdates.Count -eq 0) { return }
+    $data = [Collections.Generic.List[object]]::new()
+    foreach ($targetUpdate in $TargetUpdates) {
+        $updates = @($targetUpdate.Updates)
+        $maxColumn = [int](($updates | Measure-Object ColumnIndex -Maximum).Maximum)
+        $rowValues = [object[]]::new($maxColumn + 1)
+        foreach ($update in $updates) { $rowValues[[int]$update.ColumnIndex] = $update.Value }
+        $data.Add([pscustomobject]@{
+            dataFilter = [pscustomobject]@{
+                developerMetadataLookup = [pscustomobject]@{
+                    metadataKey = 'siola_row_target'
+                    metadataValue = [string]$targetUpdate.TargetValue
+                    visibility = 'DOCUMENT'
+                    locationType = 'ROW'
+                }
+            }
+            majorDimension = 'ROWS'
+            values = [object[][]]@([object[]]$rowValues)
+        })
+    }
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/$SpreadsheetId/values:batchUpdateByDataFilter"
+    $body = [pscustomobject]@{ valueInputOption = 'RAW'; includeValuesInResponse = $false; data = [object[]]@($data) }
+    $response = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
+    if ([int]$response.totalUpdatedRows -ne $TargetUpdates.Count) {
+        throw "Google Sheets upravil $($response.totalUpdatedRows) řádků místo očekávaných $($TargetUpdates.Count)."
+    }
+}
+
+function Remove-SiolaRowTargets {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][object[]]$Targets
+    )
+    $ids = @($Targets | ForEach-Object { [int]$_.MetadataId } | Select-Object -Unique)
+    if ($ids.Count -eq 0) { return }
+    $requests = @($ids | ForEach-Object {
+        [pscustomobject]@{
+            deleteDeveloperMetadata = [pscustomobject]@{
+                dataFilter = [pscustomobject]@{ developerMetadataLookup = [pscustomobject]@{ metadataId = $_ } }
+            }
+        }
+    })
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
+    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken `
+        -Body ([pscustomobject]@{ requests = [object[]]$requests })
 }
 
 function Get-SiolaSheetValues {
@@ -141,34 +311,6 @@ function Get-SiolaSheetValues {
         throw "List $WorksheetName je prázdný nebo jej nelze načíst."
     }
     return [pscustomobject]@{ Rows = [object[]]@($response.values) }
-}
-
-function Set-SiolaSheetCells {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$SpreadsheetId,
-        [Parameter(Mandatory)][string]$WorksheetName,
-        [Parameter(Mandatory)][string]$AccessToken,
-        [Parameter(Mandatory)][object[]]$Updates
-    )
-    if ($Updates.Count -eq 0) { return }
-    $escapedSheet = $WorksheetName.Replace("'", "''")
-    $data = [Collections.Generic.List[object]]::new()
-    foreach ($update in $Updates) {
-        $nestedValues = [object[][]]@([object[]]@($update.Value))
-        $data.Add([pscustomobject]@{
-            range = "'$escapedSheet'!$($update.Cell)"
-            majorDimension = 'ROWS'
-            values = $nestedValues
-        })
-    }
-    $body = [pscustomobject]@{
-        valueInputOption = 'RAW'
-        includeValuesInResponse = $false
-        data = [object[]]@($data)
-    }
-    $uri = "https://sheets.googleapis.com/v4/spreadsheets/$SpreadsheetId/values:batchUpdate"
-    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
 }
 
 function Get-SiolaAutomationOwner {
@@ -229,7 +371,8 @@ function Register-SiolaAutomationOwner {
             }
         })
     }
-    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
+    # Creating owner metadata is not idempotent. A rerun reconciles an ambiguous result.
+    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body -MaxAttempts 1
     $verified = Get-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
     if ($verified -cne $InstallationId) {
         throw 'Nepodařilo se výhradně přiřadit tabulku této instalaci. LIVE byl zastaven.'
@@ -250,6 +393,195 @@ function Assert-SiolaAutomationOwner {
     }
 }
 
+function Get-SiolaAutomationLeases {
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/$SpreadsheetId/developerMetadata:search"
+    $body = [pscustomobject]@{
+        dataFilters = [object[]]@([pscustomobject]@{
+            developerMetadataLookup = [pscustomobject]@{
+                metadataKey = 'siola_automation_lease'
+                visibility = 'DOCUMENT'
+            }
+        })
+    }
+    $response = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
+    $matches = if ($null -ne $response -and $response.PSObject.Properties['matchedDeveloperMetadata']) {
+        @($response.matchedDeveloperMetadata)
+    }
+    else { @() }
+    return @($matches | ForEach-Object {
+        $metadata = $_.developerMetadata
+        $parts = ([string]$metadata.metadataValue).Split('|')
+        [long]$expiresUnix = 0
+        if ($parts.Count -ne 3 -or -not [long]::TryParse($parts[2], [ref]$expiresUnix)) {
+            throw 'Běhový zámek SIOLA má neplatný formát.'
+        }
+        [pscustomobject]@{
+            MetadataId = [int]$metadata.metadataId
+            InstallationId = [string]$parts[0]
+            RunId = [string]$parts[1]
+            ExpiresUtc = [DateTimeOffset]::FromUnixTimeSeconds($expiresUnix)
+        }
+    })
+}
+
+function Get-SiolaAutomationLease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken
+    )
+    $leases = @(Get-SiolaAutomationLeases -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken)
+    if ($leases.Count -eq 0) { return $null }
+    if ($leases.Count -ne 1) { throw 'Google tabulka obsahuje více běhových zámků SIOLA.' }
+    return $leases[0]
+}
+
+function Set-SiolaAutomationLeaseValue {
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$InstallationId,
+        [Parameter(Mandatory)][string]$RunId,
+        [Parameter(Mandatory)][DateTimeOffset]$ExpiresUtc,
+        [AllowNull()]$ExistingLease
+    )
+    $value = "$InstallationId|$RunId|$($ExpiresUtc.ToUnixTimeSeconds())"
+    $request = if ($null -eq $ExistingLease) {
+        [pscustomobject]@{
+            createDeveloperMetadata = [pscustomobject]@{
+                developerMetadata = [pscustomobject]@{
+                    metadataKey = 'siola_automation_lease'
+                    metadataValue = $value
+                    location = [pscustomobject]@{ spreadsheet = $true }
+                    visibility = 'DOCUMENT'
+                }
+            }
+        }
+    }
+    else {
+        [pscustomobject]@{
+            updateDeveloperMetadata = [pscustomobject]@{
+                dataFilters = [object[]]@([pscustomobject]@{
+                    developerMetadataLookup = [pscustomobject]@{ metadataId = [int]$ExistingLease.MetadataId }
+                })
+                developerMetadata = [pscustomobject]@{ metadataValue = $value }
+                fields = 'metadataValue'
+            }
+        }
+    }
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
+    $body = [pscustomobject]@{ requests = [object[]]@($request) }
+    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body -MaxAttempts 1
+}
+
+function Enter-SiolaAutomationLease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$InstallationId,
+        [Parameter(Mandatory)][string]$RunId,
+        [int]$LeaseSeconds = 1800
+    )
+    $now = [DateTimeOffset]::UtcNow
+    $existing = @(Get-SiolaAutomationLeases -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken)
+    $active = @($existing | Where-Object { $_.ExpiresUtc -gt $now })
+    if ($active.Count -gt 0) {
+        if ($active.Count -eq 1 -and $active[0].InstallationId -ceq $InstallationId -and
+            $active[0].RunId -ceq $RunId) { return $active[0] }
+        $until = ($active | Sort-Object ExpiresUtc -Descending | Select-Object -First 1).ExpiresUtc
+        throw "Tabulku právě zpracovává jiný nebo nejednoznačný běh SIOLA do $($until.ToString('o'))."
+    }
+    $expires = $now.AddSeconds($LeaseSeconds)
+    $value = "$InstallationId|$RunId|$($expires.ToUnixTimeSeconds())"
+    $requests = [Collections.Generic.List[object]]::new()
+    foreach ($expired in $existing) {
+        $requests.Add([pscustomobject]@{
+            deleteDeveloperMetadata = [pscustomobject]@{
+                dataFilter = [pscustomobject]@{
+                    developerMetadataLookup = [pscustomobject]@{ metadataId = [int]$expired.MetadataId }
+                }
+            }
+        })
+    }
+    $requests.Add([pscustomobject]@{
+        createDeveloperMetadata = [pscustomobject]@{
+            developerMetadata = [pscustomobject]@{
+                metadataKey = 'siola_automation_lease'
+                metadataValue = $value
+                location = [pscustomobject]@{ spreadsheet = $true }
+                visibility = 'DOCUMENT'
+            }
+        }
+    })
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
+    # Delete+create is an atomic generation transition but is not safe to replay.
+    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken `
+        -Body ([pscustomobject]@{ requests = [object[]]@($requests) }) -MaxAttempts 1
+    $verified = Get-SiolaAutomationLease -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
+    if ($null -eq $verified -or $verified.InstallationId -cne $InstallationId -or $verified.RunId -cne $RunId) {
+        throw 'Nepodařilo se výhradně získat běhový zámek SIOLA.'
+    }
+    return $verified
+}
+
+function Update-SiolaAutomationLease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$InstallationId,
+        [Parameter(Mandatory)][string]$RunId,
+        [int]$LeaseSeconds = 1800
+    )
+    $existing = Get-SiolaAutomationLease -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
+    if ($null -eq $existing -or $existing.InstallationId -cne $InstallationId -or $existing.RunId -cne $RunId -or
+        $existing.ExpiresUtc -le [DateTimeOffset]::UtcNow) {
+        throw 'Tento běh již nevlastní platný běhový zámek SIOLA.'
+    }
+    # The non-retried update plus verification can take two 60-second requests.
+    # Refuse a late renewal so takeover cannot observe expiry during this transition.
+    if ($existing.ExpiresUtc -le [DateTimeOffset]::UtcNow.AddSeconds(180)) {
+        throw 'Běhový zámek je příliš blízko vypršení pro bezpečné obnovení.'
+    }
+    $expires = [DateTimeOffset]::UtcNow.AddSeconds($LeaseSeconds)
+    Set-SiolaAutomationLeaseValue -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken `
+        -InstallationId $InstallationId -RunId $RunId -ExpiresUtc $expires -ExistingLease $existing
+    $verified = Get-SiolaAutomationLease -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
+    if ($null -eq $verified -or $verified.InstallationId -cne $InstallationId -or $verified.RunId -cne $RunId) {
+        throw 'Obnovení běhového zámku SIOLA se nepodařilo.'
+    }
+    return $verified
+}
+
+function Exit-SiolaAutomationLease {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SpreadsheetId,
+        [Parameter(Mandatory)][string]$AccessToken,
+        [Parameter(Mandatory)][string]$InstallationId,
+        [Parameter(Mandatory)][string]$RunId
+    )
+    $matching = @(Get-SiolaAutomationLeases -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken |
+        Where-Object { $_.InstallationId -ceq $InstallationId -and $_.RunId -ceq $RunId })
+    if ($matching.Count -ne 1) { return }
+    $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
+    $body = [pscustomobject]@{
+        requests = [object[]]@([pscustomobject]@{
+            deleteDeveloperMetadata = [pscustomobject]@{
+                dataFilter = [pscustomobject]@{
+                    developerMetadataLookup = [pscustomobject]@{ metadataId = [int]$matching[0].MetadataId }
+                }
+            }
+        })
+    }
+    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
+}
+
 function Transfer-SiolaAutomationOwner {
     [CmdletBinding()]
     param(
@@ -257,34 +589,47 @@ function Transfer-SiolaAutomationOwner {
         [Parameter(Mandatory)][string]$AccessToken,
         [Parameter(Mandatory)][string]$InstallationId
     )
-    $existing = Get-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
-    if (-not $existing) {
-        Register-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken `
-            -InstallationId $InstallationId
-        return
-    }
-    if ($existing -ceq $InstallationId) { return }
+    $takeoverRunId = "takeover-$([guid]::NewGuid().ToString('N'))"
+    $null = Enter-SiolaAutomationLease -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken `
+        -InstallationId $InstallationId -RunId $takeoverRunId
+    try {
+        $existing = Get-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
+        if (-not $existing) {
+            Register-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken `
+                -InstallationId $InstallationId
+            return
+        }
+        if ($existing -ceq $InstallationId) { return }
 
-    $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
-    $body = [pscustomobject]@{
-        requests = [object[]]@([pscustomobject]@{
-            updateDeveloperMetadata = [pscustomobject]@{
-                dataFilters = [object[]]@([pscustomobject]@{
-                    developerMetadataLookup = [pscustomobject]@{
-                        metadataKey = 'siola_automation_owner'
-                        visibility = 'DOCUMENT'
-                    }
-                })
-                developerMetadata = [pscustomobject]@{ metadataValue = $InstallationId }
-                fields = 'metadataValue'
-            }
-        })
+        $uri = "https://sheets.googleapis.com/v4/spreadsheets/${SpreadsheetId}:batchUpdate"
+        $body = [pscustomobject]@{
+            requests = [object[]]@([pscustomobject]@{
+                updateDeveloperMetadata = [pscustomobject]@{
+                    dataFilters = [object[]]@([pscustomobject]@{
+                        developerMetadataLookup = [pscustomobject]@{
+                            metadataKey = 'siola_automation_owner'
+                            visibility = 'DOCUMENT'
+                        }
+                    })
+                    developerMetadata = [pscustomobject]@{ metadataValue = $InstallationId }
+                    fields = 'metadataValue'
+                }
+            })
+        }
+        $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
+        $verified = Get-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
+        if ($verified -cne $InstallationId) { throw 'Převzetí tabulky novou instalací se nepodařilo.' }
     }
-    $null = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
-    $verified = Get-SiolaAutomationOwner -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken
-    if ($verified -cne $InstallationId) { throw 'Převzetí tabulky novou instalací se nepodařilo.' }
+    finally {
+        Exit-SiolaAutomationLease -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken `
+            -InstallationId $InstallationId -RunId $takeoverRunId
+    }
 }
 
-Export-ModuleMember -Function Get-GoogleServiceAccountToken, Get-SiolaSheetValues, Set-SiolaSheetCells, `
+Export-ModuleMember -Function Get-GoogleServiceAccountToken, Get-SiolaSheetValues, `
     Get-SiolaAutomationOwner, Register-SiolaAutomationOwner, Assert-SiolaAutomationOwner, `
-    Transfer-SiolaAutomationOwner, Get-SiolaFreshAccessToken
+    Transfer-SiolaAutomationOwner, Get-SiolaFreshAccessToken, Get-SiolaAutomationLease, `
+    Enter-SiolaAutomationLease, Update-SiolaAutomationLease, Exit-SiolaAutomationLease, `
+    Set-SiolaGoogleRequestDeadline, Set-SiolaGoogleRequestMaxAttempts, Get-SiolaWorksheetId, `
+    New-SiolaRowTargets, Get-SiolaRowTargets, `
+    Set-SiolaRowTargetCells, Remove-SiolaRowTargets

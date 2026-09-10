@@ -50,6 +50,20 @@ Assert-Siola ($secretary.IntendedTo -eq 'secretary@example.com') 'tajemník mus�
 Assert-Siola ($secretary.BodyHtml.Contains('Vážená paní tajemnice Vzorová,')) 'tajemník musí použít Oslovení - TAJEMNÍK'
 Assert-Siola ($mayor.To -eq 'test@example.com' -and $secretary.To -eq 'test@example.com') 'TEST musí přesměrovat příjemce'
 
+$validateResult = Get-SiolaPreparedBatch -Rows @($base) -Mode VALIDATE -RunId other-run -BatchSize 50 `
+    -Signature $signature
+Assert-Siola ((Get-SiolaBatchApprovalFingerprint $result) -ceq
+    (Get-SiolaBatchApprovalFingerprint $validateResult)) 'TEST a VALIDATE musí mít stejný schvalovací otisk'
+$changedContent = New-FixtureRow
+$changedContent.ProjectName = 'Jiný projekt v obci Příkladov'
+$changedResult = Get-SiolaPreparedBatch -Rows @($changedContent) -Mode VALIDATE -RunId other-run -BatchSize 50 `
+    -Signature $signature
+Assert-Siola ((Get-SiolaBatchApprovalFingerprint $result) -cne
+    (Get-SiolaBatchApprovalFingerprint $changedResult)) 'změna obsahu musí změnit schvalovací otisk'
+$movedRow = New-FixtureRow -RowNumber 99
+Assert-Siola ((Get-SiolaRowApprovalFingerprint $base) -ceq
+    (Get-SiolaRowApprovalFingerprint $movedRow)) 'přesun řádku nesmí změnit obsahový otisk'
+
 $notExact = New-FixtureRow
 $notExact.Status = ' K ODESLÁNÍ '
 $exactResult = Get-SiolaPreparedBatch -Rows @($notExact) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature

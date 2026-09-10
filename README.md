@@ -46,7 +46,13 @@ required salutation is a validation error; the code does not guess.
 - Conflicting duplicates, mixed calls, bad grants, invalid addresses, or partially
   sent duplicate rows fail validation.
 - LIVE verifies that the sheet belongs to this one installation, preflights Outlook,
-  and then rereads, fingerprints, and claims only one applicant at a time.
+  acquires an expiring document-level run lease, and then rereads, fingerprints,
+  and claims only one applicant at a time.
+- Every applicant's complete ready-row membership is compared before claiming.
+  Temporary unique metadata is attached to each selected row and moves with that
+  row. Claims are reread immediately before every send, and result writes target
+  the metadata rather than a row number, so inserted or sorted rows cannot silently
+  redirect an update.
 - Non-send status updates receive the same fresh-row and header verification.
 - TEST validates and creates a reviewable HTML preview for every eligible applicant,
   sends only the first three applicants to the configured test inbox, and never
@@ -62,9 +68,15 @@ required salutation is a validation error; the code does not guess.
 - The scheduled task is installed disabled and runs only in the interactive,
   logged-in Windows session.
 - Successful TEST completion is recorded for 24 hours and is required before LIVE
-  can be enabled. Runtime logs are retained for 90 days.
+  can be enabled. Its digest binds every prepared message and the runtime files;
+  any content or code change requires a new TEST.
+- Reviewed HTML previews are deleted when LIVE is enabled. Otherwise an expired
+  preview is deleted on the next automation run after two days. Runtime logs are
+  retained for 90 days in an ACL-restricted folder.
 - Google tokens refresh during long runs; HTTP calls have bounded timeouts and
   quota-aware retry delays.
+- A controlled run deadline stops before claiming work that cannot safely finish;
+  the Task Scheduler limit is longer than that deadline.
 
 `ODESLÁNO` means that Classic Outlook moved the marked message into Sent Items. It
 does not guarantee acceptance by the recipient's remote mail server.

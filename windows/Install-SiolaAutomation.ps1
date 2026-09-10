@@ -38,7 +38,34 @@ if ((Test-Path -LiteralPath $existingConfig) -and -not $Force) {
     throw "Instalace už existuje v $InstallDirectory. Bez parametru -Force nebude přepsána."
 }
 
-$credentialSource = Read-Host 'Úplná cesta ke Google service-account JSON klíči'
+$installLockStream = $null
+$stagingDirectory = $null
+if ($Force -and $null -ne $previousConfig) {
+    $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($null -ne $existingTask) {
+        Disable-ScheduledTask -TaskName $TaskName | Out-Null
+        $existingTask = Get-ScheduledTask -TaskName $TaskName
+        if ([string]$existingTask.State -ceq 'Running') {
+            throw "Úloha '$TaskName' právě běží. Byla vypnuta; instalaci opakujte až po jejím skončení."
+        }
+    }
+    $existingDataDirectory = if ($previousConfig.PSObject.Properties['dataDirectory']) {
+        [Environment]::ExpandEnvironmentVariables([string]$previousConfig.dataDirectory)
+    } else { Join-Path $InstallDirectory 'data' }
+    New-Item -ItemType Directory -Path $existingDataDirectory -Force | Out-Null
+    $existingAutomationLock = Join-Path $existingDataDirectory 'automation.lock'
+    try {
+        $installLockStream = [IO.File]::Open($existingAutomationLock, [IO.FileMode]::CreateNew,
+            [IO.FileAccess]::Write, [IO.FileShare]::None)
+    }
+    catch {
+        throw 'Automatizace běží nebo zůstal její bezpečnostní zámek. Nejprve stav ověřte a použijte ForceUnlock.'
+    }
+}
+
+try {
+
+$credentialSource = (Read-Host 'Úplná cesta ke Google service-account JSON klíči').Trim().Trim('"')
 if (-not (Test-Path -LiteralPath $credentialSource -PathType Leaf)) { throw 'Zadaný JSON soubor neexistuje.' }
 $credentialCheck = Get-Content -LiteralPath $credentialSource -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($credentialCheck.type -ne 'service_account' -or -not $credentialCheck.client_email) {
@@ -74,27 +101,37 @@ if (-not [datetime]::TryParseExact($dailyTimeText, 'HH:mm', [Globalization.Cultu
 $dataDirectory = Join-Path $InstallDirectory 'data'
 $secretDirectory = Join-Path $dataDirectory 'secrets'
 New-Item -ItemType Directory -Path $InstallDirectory, $dataDirectory, $secretDirectory -Force | Out-Null
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+& icacls.exe $InstallDirectory '/inheritance:r' '/grant:r' `
+    "${identity}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '/T' '/C' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Nepodařilo se zabezpečit instalační a datový adresář.' }
 
 $runtimeFiles = @(
     'Invoke-SiolaAutomation.ps1', 'Siola.Core.psm1', 'Siola.GoogleSheets.psm1', 'Siola.Outlook.psm1',
     'Run-Validation.ps1', 'Run-Test.ps1', 'Enable-SiolaLive.ps1', 'Test-SiolaCore.ps1',
     'VALIDATE.cmd', 'TEST.cmd', 'ENABLE_LIVE.cmd', 'TAKE_OVER.cmd'
 )
+$stagingDirectory = Join-Path ([IO.Path]::GetTempPath()) "siola-install-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path $stagingDirectory | Out-Null
 foreach ($file in $runtimeFiles) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $InstallDirectory $file) -Force
-    Unblock-File -LiteralPath (Join-Path $InstallDirectory $file)
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $stagingDirectory $file)
+    Unblock-File -LiteralPath (Join-Path $stagingDirectory $file)
 }
-& (Join-Path $InstallDirectory 'Test-SiolaCore.ps1')
+& (Join-Path $stagingDirectory 'Test-SiolaCore.ps1')
+foreach ($file in $runtimeFiles) {
+    Move-Item -LiteralPath (Join-Path $stagingDirectory $file) -Destination (Join-Path $InstallDirectory $file) -Force
+}
 
 $credentialDestination = Join-Path $secretDirectory 'google-service-account.json'
-Copy-Item -LiteralPath $credentialSource -Destination $credentialDestination -Force
+$sourceFullPath = [IO.Path]::GetFullPath($credentialSource)
+$destinationFullPath = [IO.Path]::GetFullPath($credentialDestination)
+if ($sourceFullPath -ine $destinationFullPath) {
+    Copy-Item -LiteralPath $credentialSource -Destination $credentialDestination -Force
+}
 if ((Get-FileHash -LiteralPath $credentialSource -Algorithm SHA256).Hash -cne
     (Get-FileHash -LiteralPath $credentialDestination -Algorithm SHA256).Hash) {
     throw 'Kopie Google klíče neodpovídá originálu.'
 }
-$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-& icacls.exe $secretDirectory '/inheritance:r' '/grant:r' "${identity}:(OI)(CI)F" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Nepodařilo se zabezpečit adresář s Google klíčem.' }
 
 $config = [ordered]@{
     mode = 'VALIDATE'
@@ -117,7 +154,9 @@ $config = [ordered]@{
     testBatchSize = 3
     delaySeconds = 3
     sendConfirmationTimeoutSeconds = 120
+    runDeadlineMinutes = 300
     logRetentionDays = 90
+    previewRetentionDays = 2
     installationId = $(if ($null -ne $previousConfig -and $previousConfig.PSObject.Properties['installationId']) {
         [string]$previousConfig.installationId
     } else { [guid]::NewGuid().ToString('D') })
@@ -126,35 +165,30 @@ $config = [ordered]@{
 $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $existingConfig -Encoding UTF8
 Remove-Item -LiteralPath (Join-Path $dataDirectory 'test-success.json') -Force -ErrorAction SilentlyContinue
 
-$sourceFullPath = [IO.Path]::GetFullPath($credentialSource)
-$destinationFullPath = [IO.Path]::GetFullPath($credentialDestination)
-if ($sourceFullPath -ine $destinationFullPath) {
-    $keepOriginal = Read-Host 'Zabezpečená kopie klíče je hotová. Pro ponechání původního souboru napište PONECHAT; Enter jej přesune do Koše'
-    if ($keepOriginal -cne 'PONECHAT') {
-        try {
-            Add-Type -AssemblyName Microsoft.VisualBasic
-            [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
-                $sourceFullPath,
-                [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-                [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-            )
-        }
-        catch { throw "Klíč byl bezpečně zkopírován, ale originál se nepodařilo přesunout do Koše: $sourceFullPath" }
-    }
-    else { Write-Warning "Původní citlivý klíč zůstal v: $sourceFullPath" }
-}
-
 $pwsh = (Get-Process -Id $PID).Path
 $actionArguments = "-NoLogo -NoProfile -NonInteractive -File `"$(Join-Path $InstallDirectory 'Invoke-SiolaAutomation.ps1')`""
 $action = New-ScheduledTaskAction -Execute $pwsh -Argument $actionArguments
 $trigger = New-ScheduledTaskTrigger -Daily -At $dailyTime
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    -ExecutionTimeLimit (New-TimeSpan -Hours 6)
 $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
     -Principal $principal -Description 'SIOLA: Google Sheets -> Classic Outlook; pouze při přihlášeném uživateli.' `
     -Force | Out-Null
 Disable-ScheduledTask -TaskName $TaskName | Out-Null
+
+if ($sourceFullPath -ine $destinationFullPath) {
+    $deleteOriginal = Read-Host 'Instalace je hotová. Pro TRVALÉ smazání původního Google klíče napište přesně SMAZAT; jinak zůstane zachován'
+    if ($deleteOriginal -ceq 'SMAZAT') {
+        try {
+            [IO.File]::Delete($sourceFullPath)
+            if (Test-Path -LiteralPath $sourceFullPath) { throw 'Soubor stále existuje.' }
+            Write-Host 'Původní Google klíč byl trvale smazán.'
+        }
+        catch { Write-Warning "Instalace je hotová, ale původní klíč se nepodařilo smazat: $sourceFullPath" }
+    }
+    else { Write-Warning "Původní citlivý klíč zůstal v: $sourceFullPath" }
+}
 
 Write-Host ''
 Write-Host "Instalace je připravená v: $InstallDirectory"
@@ -162,3 +196,14 @@ Write-Host "Google tabulku sdílejte jako Editor s účtem: $($credentialCheck.c
 Write-Host "Naplánovaná úloha '$TaskName' je z bezpečnostních důvodů VYPNUTÁ."
 Write-Host 'Po nasdílení spusťte VALIDATE.cmd a poté TEST.cmd.'
 Write-Host 'Až po ruční kontrole testů spusťte ENABLE_LIVE.cmd.'
+}
+finally {
+    if ($stagingDirectory -and (Test-Path -LiteralPath $stagingDirectory -PathType Container)) {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $installLockStream) {
+        $lockName = $installLockStream.Name
+        $installLockStream.Dispose()
+        Remove-Item -LiteralPath $lockName -Force -ErrorAction SilentlyContinue
+    }
+}
