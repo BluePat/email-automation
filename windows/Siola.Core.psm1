@@ -163,7 +163,7 @@ function Get-RoleSentState {
     if ($sent.Count -gt 0 -and $sent.Count -lt $Rows.Count) {
         return [pscustomobject]@{
             AlreadySent = $false
-            Error = "Nekonzistentní $Label: jen část řádků je označena ODESLÁNO."
+            Error = "Nekonzistentní ${Label}: jen část řádků je označena ODESLÁNO."
         }
     }
     return [pscustomobject]@{ AlreadySent = ($sent.Count -eq $Rows.Count); Error = '' }
@@ -241,7 +241,7 @@ function New-EmailHtml {
         [Parameter(Mandatory)][object]$Signature,
         [string]$TestOriginalRecipient = ''
     )
-    $quotedNames = @($Projects | ForEach-Object { "„$(ConvertTo-HtmlText $_.Name)“" })
+    $quotedNames = @($Projects | ForEach-Object { "&bdquo;$(ConvertTo-HtmlText $_.Name)&ldquo;" })
     if ($Projects.Count -eq 1) {
         $projectPhrase = "projektem <strong>$($quotedNames[0])</strong>. Na jeho realizaci byla"
         $grantPhrase = 'dotace ve výši'
