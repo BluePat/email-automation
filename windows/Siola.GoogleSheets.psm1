@@ -274,7 +274,8 @@ function Set-SiolaRowTargetCells {
                 }
             }
             majorDimension = 'ROWS'
-            values = [object[][]]@([object[]]$rowValues)
+            # Unary comma preserves the row as one nested array for the Sheets API.
+            values = (, $rowValues)
         })
     }
     $uri = "https://sheets.googleapis.com/v4/spreadsheets/$SpreadsheetId/values:batchUpdateByDataFilter"
