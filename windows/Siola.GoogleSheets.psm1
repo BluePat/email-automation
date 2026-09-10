@@ -107,13 +107,14 @@ function Invoke-GoogleSheetsRequest {
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         $remainingSeconds = [math]::Floor(($script:RequestDeadlineUtc - [DateTimeOffset]::UtcNow).TotalSeconds)
         if ($remainingSeconds -le 0) { throw 'Časový limit běhu vypršel před požadavkem Google Sheets.' }
+        [int]$requestTimeoutSeconds = if ($remainingSeconds -gt 60) { 60 } else { [math]::Max(1, [int]$remainingSeconds) }
         try {
             $arguments = @{
                 Method = $Method
                 Uri = $Uri
                 Headers = @{ Authorization = "Bearer $AccessToken" }
                 ErrorAction = 'Stop'
-                TimeoutSec = [math]::Max(1, [math]::Min(60, $remainingSeconds))
+                TimeoutSec = $requestTimeoutSeconds
             }
             if ($null -ne $Body) {
                 $arguments.ContentType = 'application/json; charset=utf-8'

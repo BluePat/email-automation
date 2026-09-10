@@ -123,7 +123,7 @@ test("Google access tokens are refreshed during LIVE processing", () => {
 
 test("Google HTTP calls have bounded timeouts and quota-aware 429 delay", () => {
   assert.match(google, /-TimeoutSec 60/);
-  assert.match(google, /TimeoutSec = \[math\]::Max\(1, \[math\]::Min\(60, \$remainingSeconds\)\)/);
+  assert.match(google, /TimeoutSec = \$requestTimeoutSeconds/);
   assert.match(google, /\$status -eq 429\) \{ 65 \}/);
   assert.match(google, /RetryAfter/);
   assert.match(google, /Časový limit běhu vypršel během opakování/);
