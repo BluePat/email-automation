@@ -1,0 +1,25 @@
+{
+  "mode": "VALIDATE",
+  "spreadsheetId": "REPLACE_WITH_GOOGLE_SHEET_ID",
+  "worksheetName": "Obce a města",
+  "credentialsPath": "%LOCALAPPDATA%\\SIOLA Email Automation\\data\\secrets\\google-service-account.json",
+  "dataDirectory": "%LOCALAPPDATA%\\SIOLA Email Automation\\data",
+  "outlookSenderSmtpAddress": "sender@example.com",
+  "testRecipient": "test-recipient@example.com",
+  "signature": {
+    "name": "Jan Vzorový",
+    "phone": "+420 000 000 000",
+    "email": "sender@example.com",
+    "company": "Ukázková firma s.r.o.",
+    "address": "Vzorová 123, 100 00 Praha",
+    "companyEmail": "info@example.com",
+    "companyId": "00000000"
+  },
+  "batchSize": 50,
+  "testBatchSize": 3,
+  "delaySeconds": 3,
+  "sendConfirmationTimeoutSeconds": 120,
+  "logRetentionDays": 90,
+  "installationId": "generated-by-installer",
+  "machineBinding": "generated-by-installer"
+}
