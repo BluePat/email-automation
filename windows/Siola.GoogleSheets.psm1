@@ -124,13 +124,23 @@ function Invoke-GoogleSheetsRequest {
         catch {
             $errorRecord = $_
             $status = $null
-            if ($errorRecord.Exception.Response) { $status = [int]$errorRecord.Exception.Response.StatusCode }
+            $httpException = $errorRecord.Exception
+            if (-not $httpException.PSObject.Properties['Response'] -and
+                $null -ne $httpException.InnerException) {
+                $httpException = $httpException.InnerException
+            }
+            if ($httpException.PSObject.Properties['Response'] -and $null -ne $httpException.Response) {
+                $status = [int]$httpException.Response.StatusCode
+            }
+            elseif ($httpException.PSObject.Properties['StatusCode'] -and $null -ne $httpException.StatusCode) {
+                $status = [int]$httpException.StatusCode
+            }
             $retryable = $status -in @(408, 429, 500, 502, 503, 504)
             if (-not $retryable -or $attempt -eq $MaxAttempts) { throw }
             [int]$delaySeconds = if ($status -eq 429) { 65 } else { [math]::Pow(2, $attempt - 1) }
             if ($status -eq 429) {
                 try {
-                    $retryAfter = $errorRecord.Exception.Response.Headers.RetryAfter
+                    $retryAfter = $httpException.Response.Headers.RetryAfter
                     if ($null -ne $retryAfter -and $null -ne $retryAfter.Delta) {
                         $delaySeconds = [math]::Max($delaySeconds, [math]::Ceiling($retryAfter.Delta.TotalSeconds))
                     }
