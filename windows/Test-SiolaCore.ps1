@@ -45,9 +45,9 @@ Assert-Siola ($result.JobCount -eq 2) 'musí vzniknout dva samostatné e-maily'
 $mayor = @($result.Groups[0].Jobs | Where-Object Role -eq 'STAROSTA')[0]
 $secretary = @($result.Groups[0].Jobs | Where-Object Role -eq 'TAJEMNIK')[0]
 Assert-Siola ($mayor.IntendedTo -eq 'mayor@example.com') 'starosta musí použít Email - STAROSTA'
-Assert-Siola ($mayor.BodyHtml.Contains('Vážený pane starosto Vzorový,')) 'starosta musí použít Oslovení - STAROSTA'
+Assert-Siola ([Net.WebUtility]::HtmlDecode($mayor.BodyHtml).Contains('Vážený pane starosto Vzorový,')) 'starosta musí použít Oslovení - STAROSTA'
 Assert-Siola ($secretary.IntendedTo -eq 'secretary@example.com') 'tajemník musí použít Email - TAJEMNÍK'
-Assert-Siola ($secretary.BodyHtml.Contains('Vážená paní tajemnice Vzorová,')) 'tajemník musí použít Oslovení - TAJEMNÍK'
+Assert-Siola ([Net.WebUtility]::HtmlDecode($secretary.BodyHtml).Contains('Vážená paní tajemnice Vzorová,')) 'tajemník musí použít Oslovení - TAJEMNÍK'
 Assert-Siola ($mayor.To -eq 'test@example.com' -and $secretary.To -eq 'test@example.com') 'TEST musí přesměrovat příjemce'
 
 $validateResult = Get-SiolaPreparedBatch -Rows @($base) -Mode VALIDATE -RunId other-run -BatchSize 50 `
