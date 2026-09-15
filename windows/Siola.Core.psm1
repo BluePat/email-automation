@@ -238,7 +238,6 @@ function New-EmailHtml {
         [object[]]$Projects,
         [string]$Call,
         [string]$FormattedGrant,
-        [Parameter(Mandatory)][object]$Signature,
         [string]$TestOriginalRecipient = ''
     )
     $quotedNames = @($Projects | ForEach-Object { "&bdquo;$(ConvertTo-HtmlText $_.Name)&ldquo;" })
@@ -269,16 +268,6 @@ $banner<p>$(ConvertTo-HtmlText $Salutation)</p>
 <p>V uplynulém roce jsme zajišťovali dotační administraci pro 27 klientů a spravovali projekty s dotacemi přesahujícími 76 mil. Kč.</p>
 <p><strong>Stačí mi prosím krátká informace, zda tuto agendu již máte zajištěnou, nebo zda má smysl se o projektu krátce pobavit.</strong> Pokud ji má na starosti někdo jiný, budu Vám vděčný za přesměrování.</p>
 <p>Se zdvořilým pozdravem,</p>
-<p>$(ConvertTo-HtmlText $Signature.Name)</p>
-<p style="color:#333399">tel: $(ConvertTo-HtmlText $Signature.Phone)<br>
-e-mail: <a href="mailto:$(ConvertTo-HtmlText $Signature.Email)">$(ConvertTo-HtmlText $Signature.Email)</a></p>
-<p style="color:#333399">$(ConvertTo-HtmlText $Signature.Company)<br>
-$(ConvertTo-HtmlText $Signature.Address)<br>
-Email: <a href="mailto:$(ConvertTo-HtmlText $Signature.CompanyEmail)">$(ConvertTo-HtmlText $Signature.CompanyEmail)</a><br>
-IČ: $(ConvertTo-HtmlText $Signature.CompanyId)</p>
-<p style="font-size:8pt;color:#333399">Informace obsažené v této zprávě mohou být důvěrného charakteru a mohou požívat zvláštní ochrany. Jsou určeny výhradně uvedeným adresátům. Pokud nejste adresátem, obratem nás, prosím, informujte (zasláním zprávy zpět odesílateli) a zprávu vymažte ze systému. Bez řádně vydaného souhlasu je zakázáno informace obsažené ve zprávě jakýmkoliv způsobem používat či je dále šířit.</p>
-<p style="font-size:8pt;color:#333399">This e-mail may contain privileged and confidential information. It is intended for the named recipients only. If you are not an intended recipient, please notify us immediately (by reply e-mail) and delete this e-mail from your system. Any use or retransmission without proper authorization is prohibited.</p>
-<p style="font-size:8pt;color:#70ad47">Before you print it, think about the ENVIRONMENT.</p>
 </div>
 "@
 }
@@ -296,14 +285,13 @@ function New-EmailJob {
         [string]$RunId,
         [int]$Ordinal,
         [string]$Mode,
-        [string]$TestRecipient,
-        [Parameter(Mandatory)][object]$Signature
+        [string]$TestRecipient
     )
     $jobId = "$RunId-$Ordinal-$Role"
     $baseSubject = "$(Get-ShortApplicant $Applicant) – projekt FVE / dotace $Call"
     $isTest = $Mode -eq 'TEST'
     $approvalBodyHtml = New-EmailHtml -Salutation $Salutation -Projects $Projects -Call $Call `
-        -FormattedGrant (Format-GrantCzk $TotalGrant) -Signature $Signature
+        -FormattedGrant (Format-GrantCzk $TotalGrant)
     return [pscustomobject]@{
         JobId = $jobId
         Role = $Role
@@ -314,7 +302,7 @@ function New-EmailJob {
         ApprovalSubject = $baseSubject
         ApprovalBodyHtml = $approvalBodyHtml
         BodyHtml = (New-EmailHtml -Salutation $Salutation -Projects $Projects -Call $Call `
-            -FormattedGrant (Format-GrantCzk $TotalGrant) -Signature $Signature `
+            -FormattedGrant (Format-GrantCzk $TotalGrant) `
             -TestOriginalRecipient $(if ($isTest) { $Email } else { '' }))
         RowNumbers = $RowNumbers
     }
@@ -327,24 +315,13 @@ function Get-SiolaPreparedBatch {
         [ValidateSet('VALIDATE', 'TEST', 'LIVE')][string]$Mode,
         [string]$RunId,
         [int]$BatchSize = 50,
-        [string]$TestRecipient = '',
-        [Parameter(Mandatory)][object]$Signature
+        [string]$TestRecipient = ''
     )
     if (-not (Get-CleanText $RunId)) { throw 'Chybí runId.' }
     if ($Mode -eq 'TEST' -and -not (Test-EmailAddress $TestRecipient)) {
         throw 'V režimu TEST musí být platný testovací příjemce.'
     }
     if ($BatchSize -lt 1) { throw 'BatchSize musí být alespoň 1.' }
-    $requiredSignatureFields = @('Name', 'Phone', 'Email', 'Company', 'Address', 'CompanyEmail', 'CompanyId')
-    foreach ($field in $requiredSignatureFields) {
-        if (-not $Signature.PSObject.Properties[$field] -or -not (Get-CleanText $Signature.$field)) {
-            throw "V podpisu chybí $field."
-        }
-    }
-    if (-not (Test-EmailAddress $Signature.Email) -or -not (Test-EmailAddress $Signature.CompanyEmail)) {
-        throw 'Podpis obsahuje neplatnou e-mailovou adresu.'
-    }
-
     $eligible = @($Rows | Where-Object { (Get-CellText $_.Status) -ceq $script:ReadyStatus })
     $applicantGroups = @($eligible | Group-Object { Get-CanonicalText $_.Applicant } |
         Sort-Object { ($_.Group | Measure-Object RowNumber -Minimum).Minimum })
@@ -429,14 +406,14 @@ function Get-SiolaPreparedBatch {
             $jobs.Add((New-EmailJob -Role STAROSTA -Email $mayorEmail.Value `
                 -Salutation $mayorSalutation.Value -Applicant $applicant.Value -Projects $projects `
                 -Call $calls[0] -TotalGrant $totalGrant -RowNumbers ([int[]]@($groupRows.RowNumber)) `
-                -RunId $RunId -Ordinal $ordinal -Mode $Mode -TestRecipient $TestRecipient -Signature $Signature))
+                -RunId $RunId -Ordinal $ordinal -Mode $Mode -TestRecipient $TestRecipient))
         }
         if ($secretaryEmail.Value -and -not $secretaryState.AlreadySent) {
             $ordinal++
             $jobs.Add((New-EmailJob -Role TAJEMNIK -Email $secretaryEmail.Value `
                 -Salutation $secretarySalutation.Value -Applicant $applicant.Value -Projects $projects `
                 -Call $calls[0] -TotalGrant $totalGrant -RowNumbers ([int[]]@($groupRows.RowNumber)) `
-                -RunId $RunId -Ordinal $ordinal -Mode $Mode -TestRecipient $TestRecipient -Signature $Signature))
+                -RunId $RunId -Ordinal $ordinal -Mode $Mode -TestRecipient $TestRecipient))
         }
 
         $prepared = [pscustomobject]@{

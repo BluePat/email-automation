@@ -163,17 +163,22 @@ test("public examples contain no live spreadsheet or contact defaults", () => {
   assert.equal(configExample.spreadsheetId, "REPLACE_WITH_GOOGLE_SHEET_ID");
   assert.match(configExample.outlookSenderSmtpAddress, /@example\.com$/);
   assert.match(configExample.testRecipient, /@example\.com$/);
-  assert.match(configExample.signature.email, /@example\.com$/);
-  assert.match(configExample.signature.companyEmail, /@example\.com$/);
+  assert.equal("signature" in configExample, false);
   assert.doesNotMatch(installer, /výchozí: dodaná databáze/);
   assert.match(installer, /\$spreadsheetInput = Read-RequiredText 'Google Sheet URL nebo ID'/);
 });
 
-test("email signature comes from validated local configuration", () => {
-  assert.match(core, /\$Signature\.Name/);
-  assert.match(core, /\$Signature\.CompanyEmail/);
-  assert.match(runner, /V konfiguraci chybí signature/);
-  assert.match(runner, /-Signature \$config\.signature/);
+test("email signature comes from the selected Classic Outlook account", () => {
+  assert.doesNotMatch(core, /\$Signature\b/);
+  assert.doesNotMatch(installer, /Jméno do podpisu|Telefon do podpisu|Název společnosti do podpisu/);
+  assert.match(outlook, /Get-SiolaOutlookDefaultSignature/);
+  assert.match(outlook, /\$mail\.SendUsingAccount = \$OutlookContext\.Account[\s\S]*?Wait-SiolaMailDefaultSignature -Mail \$mail/);
+  assert.match(outlook, /\$Mail\.Display\(\$false\)/);
+  assert.match(outlook, /\$mail\.Close\(1\)/);
+  assert.match(outlook, /Merge-SiolaOutlookSignature -MessageHtml/);
+  assert.match(runner, /outlookSignatureFingerprint = \[string\]\$outlook\.SignatureFingerprint/);
+  assert.match(enableLive, /receipt\.outlookSignatureFingerprint -cne \[string\]\$outlook\.SignatureFingerprint/);
+  assert.match(runner, /config\.approvedOutlookSignatureFingerprint -cne \[string\]\$outlook\.SignatureFingerprint/);
 });
 
 test("bootstrap failures create an operator notification", () => {

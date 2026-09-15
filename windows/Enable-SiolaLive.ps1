@@ -16,6 +16,7 @@ $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom
 $dataDirectory = [Environment]::ExpandEnvironmentVariables([string]$config.dataDirectory)
 if (-not $dataDirectory) { throw 'V konfiguraci chybí dataDirectory.' }
 Import-Module (Join-Path $PSScriptRoot 'Siola.Core.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Siola.Outlook.psm1') -Force
 
 Write-Host 'Probíhá poslední kontrola tabulky. Nic se nebude měnit ani odesílat.'
 $digestPath = Join-Path $dataDirectory "activation-digest-$([guid]::NewGuid().ToString('N')).txt"
@@ -64,6 +65,19 @@ if (-not $receipt.PSObject.Properties['runtimeFingerprint'] -or
     throw 'Provozní soubory se od posledního TESTU změnily. Spusťte TEST.cmd znovu.'
 }
 
+Write-Host 'Ověřuji výchozí podpis zvoleného účtu v Classic Outlook.'
+$outlook = $null
+try {
+    $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
+    if (-not $receipt.PSObject.Properties['outlookSignatureFingerprint'] -or
+        -not ([string]$receipt.outlookSignatureFingerprint).Trim() -or
+        [string]$receipt.outlookSignatureFingerprint -cne [string]$outlook.SignatureFingerprint) {
+        throw 'Výchozí podpis v Classic Outlook se od TESTU změnil. Spusťte TEST.cmd znovu.'
+    }
+    $approvedOutlookSignatureFingerprint = [string]$outlook.SignatureFingerprint
+}
+finally { Disconnect-SiolaOutlook $outlook }
+
 $expectedConfirmation = if ($TakeOver) { 'PREVZIT' } else { 'LIVE' }
 $prompt = if ($TakeOver) {
     'Nejdříve vypněte starou instalaci. Pro převzetí tabulky touto instalací napište přesně PREVZIT'
@@ -84,6 +98,13 @@ else {
         -InstallationId ([string]$config.installationId)
 }
 $config.mode = 'LIVE'
+if ($config.PSObject.Properties['approvedOutlookSignatureFingerprint']) {
+    $config.approvedOutlookSignatureFingerprint = $approvedOutlookSignatureFingerprint
+}
+else {
+    $config | Add-Member -NotePropertyName approvedOutlookSignatureFingerprint `
+        -NotePropertyValue $approvedOutlookSignatureFingerprint
+}
 $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $configPath -Encoding UTF8
 Enable-ScheduledTask -TaskName $TaskName | Out-Null
 foreach ($sensitivePath in @([string]$receipt.previewPath, $receiptPath)) {

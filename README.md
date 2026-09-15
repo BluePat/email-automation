@@ -57,6 +57,9 @@ required salutation is a validation error; the code does not guess.
 - TEST validates and creates a reviewable HTML preview for every eligible applicant,
   sends only the first three applicants to the configured test inbox, and never
   changes the sheet.
+- The message body contains no manually configured signature fields. Classic
+  Outlook supplies the default signature for the exact sending account. TEST
+  captures it in the preview and test messages; LIVE stops if it later changes.
 - Outlook sending is never automatically retried.
 - A message is marked `ODESLÁNO` only after its hidden job identifier is found in
   Classic Outlook's Sent Items. Offline or stuck-Outbox messages fail closed.
@@ -84,7 +87,8 @@ does not guarantee acceptance by the recipient's remote mail server.
 ## Requirements
 
 - Windows 10 or 11 with PowerShell 7.
-- Classic Outlook installed and configured with the sending account.
+- Classic Outlook installed with the sending account and a non-empty default
+  signature selected for that account's new messages.
 - The Windows user must remain signed in at the scheduled time.
 - A Google service account with the Google Sheets API enabled.
 - The source Google Sheet shared with that service account as Editor.

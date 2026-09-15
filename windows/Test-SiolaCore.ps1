@@ -28,19 +28,9 @@ function New-FixtureRow {
     }
 }
 
-$signature = [pscustomobject]@{
-    Name = 'Jan Vzorový'
-    Phone = '+420 000 000 000'
-    Email = 'sender@example.com'
-    Company = 'Ukázková firma s.r.o.'
-    Address = 'Vzorová 123, 100 00 Praha'
-    CompanyEmail = 'info@example.com'
-    CompanyId = '00000000'
-}
-
 $base = New-FixtureRow
 $result = Get-SiolaPreparedBatch -Rows @($base) -Mode TEST -RunId selftest -BatchSize 50 `
-    -TestRecipient test@example.com -Signature $signature
+    -TestRecipient test@example.com
 Assert-Siola ($result.JobCount -eq 2) 'musí vzniknout dva samostatné e-maily'
 $mayor = @($result.Groups[0].Jobs | Where-Object Role -eq 'STAROSTA')[0]
 $secretary = @($result.Groups[0].Jobs | Where-Object Role -eq 'TAJEMNIK')[0]
@@ -50,14 +40,12 @@ Assert-Siola ($secretary.IntendedTo -eq 'secretary@example.com') 'tajemník mus�
 Assert-Siola ([Net.WebUtility]::HtmlDecode($secretary.BodyHtml).Contains('Vážená paní tajemnice Vzorová,')) 'tajemník musí použít Oslovení - TAJEMNÍK'
 Assert-Siola ($mayor.To -eq 'test@example.com' -and $secretary.To -eq 'test@example.com') 'TEST musí přesměrovat příjemce'
 
-$validateResult = Get-SiolaPreparedBatch -Rows @($base) -Mode VALIDATE -RunId other-run -BatchSize 50 `
-    -Signature $signature
+$validateResult = Get-SiolaPreparedBatch -Rows @($base) -Mode VALIDATE -RunId other-run -BatchSize 50
 Assert-Siola ((Get-SiolaBatchApprovalFingerprint $result) -ceq
     (Get-SiolaBatchApprovalFingerprint $validateResult)) 'TEST a VALIDATE musí mít stejný schvalovací otisk'
 $changedContent = New-FixtureRow
 $changedContent.ProjectName = 'Jiný projekt v obci Příkladov'
-$changedResult = Get-SiolaPreparedBatch -Rows @($changedContent) -Mode VALIDATE -RunId other-run -BatchSize 50 `
-    -Signature $signature
+$changedResult = Get-SiolaPreparedBatch -Rows @($changedContent) -Mode VALIDATE -RunId other-run -BatchSize 50
 Assert-Siola ((Get-SiolaBatchApprovalFingerprint $result) -cne
     (Get-SiolaBatchApprovalFingerprint $changedResult)) 'změna obsahu musí změnit schvalovací otisk'
 $movedRow = New-FixtureRow -RowNumber 99
@@ -66,17 +54,17 @@ Assert-Siola ((Get-SiolaRowApprovalFingerprint $base) -ceq
 
 $notExact = New-FixtureRow
 $notExact.Status = ' K ODESLÁNÍ '
-$exactResult = Get-SiolaPreparedBatch -Rows @($notExact) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$exactResult = Get-SiolaPreparedBatch -Rows @($notExact) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($exactResult.JobCount -eq 0) 'stav musí být přesná hodnota K ODESLÁNÍ'
 
 $duplicate = New-FixtureRow -RowNumber 3
-$duplicateResult = Get-SiolaPreparedBatch -Rows @($base, $duplicate) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$duplicateResult = Get-SiolaPreparedBatch -Rows @($base, $duplicate) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($duplicateResult.JobCount -eq 2) 'duplicitní Číslo RM se nesmí odeslat dvakrát'
 Assert-Siola ($duplicateResult.Groups[0].Jobs[0].BodyHtml.Contains('1.057.223,- Kč')) 'duplicitní dotace se nesmí sečíst dvakrát'
 
 $conflict = New-FixtureRow -RowNumber 3
 $conflict.Grant = 42
-$conflictResult = Get-SiolaPreparedBatch -Rows @($base, $conflict) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$conflictResult = Get-SiolaPreparedBatch -Rows @($base, $conflict) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($conflictResult.ValidationErrorCount -eq 1 -and $conflictResult.JobCount -eq 0) 'rozporná duplicita musí zastavit skupinu'
 
 $historical = New-FixtureRow -RowNumber 2
@@ -84,12 +72,12 @@ $historical.Status = 'ODESLÁNO'
 $historical.MayorStatus = 'ODESLÁNO | old-job'
 $historical.SecretaryStatus = 'ODESLÁNO | old-job-2'
 $newDuplicate = New-FixtureRow -RowNumber 3
-$historicalResult = Get-SiolaPreparedBatch -Rows @($historical, $newDuplicate) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$historicalResult = Get-SiolaPreparedBatch -Rows @($historical, $newDuplicate) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($historicalResult.ValidationErrorCount -eq 1 -and $historicalResult.JobCount -eq 0) 'historicky odeslané RM se nesmí znovu připravit'
 
 $blankDuplicate = New-FixtureRow -RowNumber 3
 $blankDuplicate.MayorEmail = ''
-$blankResult = Get-SiolaPreparedBatch -Rows @($base, $blankDuplicate) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$blankResult = Get-SiolaPreparedBatch -Rows @($base, $blankDuplicate) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($blankResult.ValidationErrorCount -eq 1) 'povinný údaj nesmí být převzat z jiného řádku skupiny'
 
 Assert-Siola (Test-SiolaSentStatus 'ODESLÁNO') 'přesný stav ODESLÁNO musí být rozpoznán'
@@ -98,17 +86,33 @@ Assert-Siola (-not (Test-SiolaSentStatus 'ODESLÁNO NE')) 'náhodný prefix ODES
 
 $usGrant = New-FixtureRow
 $usGrant.Grant = '1,057.22'
-$usGrantResult = Get-SiolaPreparedBatch -Rows @($usGrant) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$usGrantResult = Get-SiolaPreparedBatch -Rows @($usGrant) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($usGrantResult.ValidationErrorCount -eq 1) 'US textový formát dotace se nesmí tiše chybně převést'
 
 $czechGrant = New-FixtureRow
 $czechGrant.Grant = '1.057.223,50 Kč'
-$czechGrantResult = Get-SiolaPreparedBatch -Rows @($czechGrant) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$czechGrantResult = Get-SiolaPreparedBatch -Rows @($czechGrant) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($czechGrantResult.ValidationErrorCount -eq 0 -and $czechGrantResult.JobCount -eq 2) 'jednoznačný český formát dotace musí projít'
 
 $orphanSalutation = New-FixtureRow
 $orphanSalutation.SecretaryEmail = ''
-$orphanResult = Get-SiolaPreparedBatch -Rows @($orphanSalutation) -Mode VALIDATE -RunId selftest -BatchSize 50 -Signature $signature
+$orphanResult = Get-SiolaPreparedBatch -Rows @($orphanSalutation) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($orphanResult.ValidationErrorCount -eq 1) 'oslovení tajemníka bez e-mailu musí být chyba'
+
+$mergedHtml = Merge-SiolaOutlookSignature `
+    -MessageHtml '<div id="message">Text zprávy</div>' `
+    -SignatureDocumentHtml '<html><body><div id="signature">Výchozí podpis</div></body></html>'
+Assert-Siola ($mergedHtml -match '<body><div id="message">Text zprávy</div><div id="signature">') `
+    'text zprávy musí být vložen před výchozí podpis Outlooku'
+$signatureFingerprintA = Get-SiolaOutlookSignatureFingerprint `
+    '<html><body><p>Jan Vzorový</p><img src="cid:image001.png@run-a" alt="Logo"></body></html>'
+$signatureFingerprintB = Get-SiolaOutlookSignatureFingerprint `
+    '<html><body><p>Jan Vzorový</p><img src="cid:image001.png@run-b" alt="Logo"></body></html>'
+$changedSignatureFingerprint = Get-SiolaOutlookSignatureFingerprint `
+    '<html><body><p>Jana Vzorová</p><img src="cid:image001.png@run-c" alt="Logo"></body></html>'
+Assert-Siola ($signatureFingerprintA -ceq $signatureFingerprintB) `
+    'proměnlivé Outlook CID nesmí měnit otisk stejného podpisu'
+Assert-Siola ($signatureFingerprintA -cne $changedSignatureFingerprint) `
+    'změna textu podpisu musí změnit jeho otisk'
 
 Write-Host 'SIOLA self-test: OK'

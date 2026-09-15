@@ -80,16 +80,6 @@ $sender = Read-RequiredText 'Odesílající účet v Classic Outlook'
 Assert-EmailAddress -Value $sender -Label 'Odesílající účet'
 $testRecipient = Read-RequiredText 'E-mail, na který se mají poslat TEST zprávy'
 Assert-EmailAddress -Value $testRecipient -Label 'Testovací e-mail'
-$signatureName = Read-RequiredText 'Jméno do podpisu e-mailu'
-$signaturePhone = Read-RequiredText 'Telefon do podpisu e-mailu'
-$signatureEmail = (Read-Host "E-mail do osobního podpisu [$sender]").Trim()
-if (-not $signatureEmail) { $signatureEmail = $sender }
-Assert-EmailAddress -Value $signatureEmail -Label 'E-mail v osobním podpisu'
-$signatureCompany = Read-RequiredText 'Název společnosti do podpisu'
-$signatureAddress = Read-RequiredText 'Adresa společnosti do podpisu'
-$signatureCompanyEmail = Read-RequiredText 'Obecný e-mail společnosti do podpisu'
-Assert-EmailAddress -Value $signatureCompanyEmail -Label 'E-mail společnosti'
-$signatureCompanyId = Read-RequiredText 'IČ společnosti do podpisu'
 $dailyTimeText = Read-Host 'Denní čas spuštění ve formátu HH:mm [08:00]'
 if (-not $dailyTimeText) { $dailyTimeText = '08:00' }
 [datetime]$dailyTime = [datetime]::MinValue
@@ -141,15 +131,7 @@ $config = [ordered]@{
     dataDirectory = $dataDirectory
     outlookSenderSmtpAddress = $sender
     testRecipient = $testRecipient
-    signature = [ordered]@{
-        name = $signatureName
-        phone = $signaturePhone
-        email = $signatureEmail
-        company = $signatureCompany
-        address = $signatureAddress
-        companyEmail = $signatureCompanyEmail
-        companyId = $signatureCompanyId
-    }
+    approvedOutlookSignatureFingerprint = ''
     batchSize = 50
     testBatchSize = 3
     delaySeconds = 3

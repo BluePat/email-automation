@@ -12,6 +12,12 @@ návrat. Pokud přepínač není dostupný, vyhledejte v nabídce Start aplikaci
 zpráva se musí uložit do složky **Odeslaná pošta**; bez ukládání odeslaných kopií
 automat z bezpečnostních důvodů nepotvrdí odeslání.
 
+V **Soubor > Možnosti > Pošta > Podpisy** nastavte pro přesný odesílající účet
+výchozí podpis pro **Nové zprávy**. Automat podpisové údaje neukládá ani je
+neskládá sám. Při TESTU načte podpis z Classic Outlook, vloží jej do náhledu i
+testovacích zpráv a otevřený koncept hned zahodí. Při zpracování může krátce
+zobrazit okno nové zprávy; tím nechá Outlook vložit podpis včetně obrázků.
+
 Microsoft uvádí, že New Outlook nepodporuje Outlook Object Model ani COM. Tato
 automatizace proto s New Outlook nefunguje:
 https://support.microsoft.com/en-us/outlook/getstarted/feature-comparison-between-new-outlook-and-classic-outlook
@@ -45,8 +51,8 @@ zobrazit žádost o oprávnění správce; tu je nutné potvrdit.
 1. Zkopírujte celou složku projektu na cílový počítač.
 2. Dvakrát klikněte na `windows/INSTALL.cmd`.
 3. Vyberte stažený Google service-account JSON klíč.
-4. Zadejte Google Sheet URL, odesílající účet, vlastní testovací e-mail, kontaktní
-   údaje podpisu a denní čas spuštění. Instalátor nemá žádné předvyplněné provozní
+4. Zadejte Google Sheet URL, odesílající účet, vlastní testovací e-mail a denní
+   čas spuštění. Instalátor nemá žádné předvyplněné provozní
    identifikátory ani osobní údaje.
 5. Instalátor zkopíruje provozní soubory do
    `%LOCALAPPDATA%\SIOLA Email Automation` a omezí přístup ke konfiguraci, klíči,
@@ -96,7 +102,8 @@ U každé zprávy zkontrolujte:
 V automaticky otevřeném HTML náhledu navíc projděte nebo vyhledejte všechny obce,
 příjemce a oslovení. Úspěšný TEST vytvoří potvrzení platné 24 hodin.
 Potvrzení obsahuje otisk všech připravených zpráv a provozních souborů. Jakákoli
-změna připravených řádků, podpisu nebo programu proto vyžaduje nový TEST. Náhled se
+změna připravených řádků, výchozího podpisu Outlooku nebo programu proto vyžaduje
+nový TEST a nové spuštění `ENABLE_LIVE.cmd`. Náhled se
 po zapnutí LIVE odstraní; bez zapnutí se smaže při nejbližším dalším spuštění,
 jakmile je starší než dva dny.
 

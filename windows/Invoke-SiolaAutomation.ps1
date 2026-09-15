@@ -247,7 +247,11 @@ function Get-SiolaVerifiedSheetRows {
 }
 
 function Write-SiolaPreviewReport {
-    param([Parameter(Mandatory)]$Batch, [Parameter(Mandatory)][string]$Path)
+    param(
+        [Parameter(Mandatory)]$Batch,
+        [Parameter(Mandatory)]$OutlookContext,
+        [Parameter(Mandatory)][string]$Path
+    )
     $sections = [Collections.Generic.List[string]]::new()
     foreach ($group in $Batch.Groups) {
         foreach ($job in $group.Jobs) {
@@ -256,12 +260,15 @@ function Write-SiolaPreviewReport {
             $recipient = [Net.WebUtility]::HtmlEncode([string]$job.IntendedTo)
             $subject = [Net.WebUtility]::HtmlEncode([string]$job.Subject)
             $rows = [Net.WebUtility]::HtmlEncode(($job.RowNumbers -join ', '))
-            $sections.Add("<section><h2>$applicant – $role</h2><p><strong>Příjemce:</strong> $recipient<br><strong>Řádky:</strong> $rows<br><strong>Předmět:</strong> $subject</p><div class=`"email`">$($job.BodyHtml)</div></section>")
+            $rendered = Merge-SiolaOutlookSignature -MessageHtml ([string]$job.BodyHtml) `
+                -SignatureDocumentHtml ([string]$OutlookContext.SignatureHtml)
+            $srcdoc = [Net.WebUtility]::HtmlEncode($rendered)
+            $sections.Add("<section><h2>$applicant – $role</h2><p><strong>Příjemce:</strong> $recipient<br><strong>Řádky:</strong> $rows<br><strong>Předmět:</strong> $subject</p><iframe class=`"email`" title=`"Náhled e-mailu`" srcdoc=`"$srcdoc`"></iframe></section>")
         }
     }
     $html = @"
 <!doctype html><html lang="cs"><head><meta charset="utf-8"><title>SIOLA – kontrola všech e-mailů</title>
-<style>body{font-family:Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px}section{border-top:4px solid #333399;margin:28px 0;padding-top:12px}.email{border:1px solid #bbb;padding:16px;background:#fff}h1{color:#333399}</style></head>
+<style>body{font-family:Arial,sans-serif;max-width:1100px;margin:24px auto;padding:0 16px}section{border-top:4px solid #333399;margin:28px 0;padding-top:12px}.email{border:1px solid #bbb;width:100%;height:700px;background:#fff}h1{color:#333399}</style></head>
 <body><h1>SIOLA – kontrola všech připravených e-mailů</h1><p>Běh: $($script:RunId). Počet zpráv: $($Batch.JobCount). Tento soubor nic neodesílá.</p>
 $($sections -join "`n")
 </body></html>
@@ -302,22 +309,6 @@ if ($ApprovalDigestPath -and $effectiveMode -ne 'VALIDATE') {
 }
 foreach ($name in @('spreadsheetId', 'worksheetName', 'credentialsPath', 'outlookSenderSmtpAddress')) {
     if (-not ([string]$config.$name).Trim()) { throw "V konfiguraci chybí $name." }
-}
-if (-not $config.PSObject.Properties['signature'] -or $null -eq $config.signature) {
-    throw 'V konfiguraci chybí signature. Spusťte znovu instalaci.'
-}
-foreach ($name in @('name', 'phone', 'email', 'company', 'address', 'companyEmail', 'companyId')) {
-    if (-not $config.signature.PSObject.Properties[$name] -or -not ([string]$config.signature.$name).Trim()) {
-        throw "V konfiguraci podpisu chybí $name."
-    }
-}
-foreach ($name in @('email', 'companyEmail')) {
-    $signatureEmail = ([string]$config.signature.$name).Trim()
-    try {
-        $parsedSignatureEmail = [Net.Mail.MailAddress]::new($signatureEmail)
-        if ($parsedSignatureEmail.Address -ine $signatureEmail) { throw 'Neplatná adresa' }
-    }
-    catch { throw "E-mail podpisu $name nemá platný formát." }
 }
 if ($effectiveMode -eq 'LIVE' -and (-not $config.PSObject.Properties['installationId'] -or
         -not ([string]$config.installationId).Trim())) {
@@ -436,7 +427,7 @@ try {
     # VALIDATE and TEST inspect every eligible applicant. TEST limits only actual test sends.
     $batchSize = if ($effectiveMode -eq 'LIVE') { $configuredBatchSize } else { [int]::MaxValue }
     $batch = Get-SiolaPreparedBatch -Rows $sourceRows -Mode $effectiveMode -RunId $script:RunId `
-        -BatchSize $batchSize -TestRecipient ([string]$config.testRecipient) -Signature $config.signature
+        -BatchSize $batchSize -TestRecipient ([string]$config.testRecipient)
 
     Write-SiolaLog INFO PREPARED @{
         eligibleRows = $batch.EligibleRowCount
@@ -478,11 +469,11 @@ try {
         if ($batch.ValidationErrorCount -gt 0) { throw 'TEST byl zastaven kvůli chybám validace. Tabulka nebyla změněna.' }
         if ($batch.JobCount -eq 0) { Write-SiolaLog INFO NOTHING_TO_TEST @{}; return }
 
+        $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
         New-Item -ItemType Directory -Path $previewDirectory -Force | Out-Null
         $previewPath = Join-Path $previewDirectory "preview-$($script:RunId).html"
-        Write-SiolaPreviewReport -Batch $batch -Path $previewPath
+        Write-SiolaPreviewReport -Batch $batch -OutlookContext $outlook -Path $previewPath
 
-        $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
         $testGroups = @($batch.Groups | Select-Object -First ([int]$config.testBatchSize))
         [int]$sentJobs = 0
         foreach ($group in $testGroups) {
@@ -507,6 +498,7 @@ try {
             sentTestJobs = $sentJobs
             approvalDigest = Get-SiolaBatchApprovalFingerprint -Batch $batch
             runtimeFingerprint = Get-SiolaRuntimeFingerprint -RootPath $PSScriptRoot
+            outlookSignatureFingerprint = [string]$outlook.SignatureFingerprint
         }
         $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
         try { Start-Process -FilePath $previewPath | Out-Null } catch {}
@@ -577,6 +569,11 @@ try {
     }
 
     $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
+    if (-not $config.PSObject.Properties['approvedOutlookSignatureFingerprint'] -or
+        -not ([string]$config.approvedOutlookSignatureFingerprint).Trim() -or
+        [string]$config.approvedOutlookSignatureFingerprint -cne [string]$outlook.SignatureFingerprint) {
+        throw 'Výchozí podpis v Classic Outlook chybí nebo se změnil od schválení. Spusťte TEST.cmd a ENABLE_LIVE.cmd znovu.'
+    }
     [int]$processedJobs = 0
     [bool]$deferredForDeadline = $false
     foreach ($group in $batch.Groups) {
