@@ -685,10 +685,12 @@ try {
         }
 
         $sentAt = [DateTime]::Now.ToOADate()
-        $mayorSent = $group.MayorAlreadySent -or ($outcomes.ContainsKey('STAROSTA') -and $outcomes['STAROSTA'].Success)
+        $mayorSent = (-not $group.MayorRequired) -or $group.MayorAlreadySent -or
+            ($outcomes.ContainsKey('STAROSTA') -and $outcomes['STAROSTA'].Success)
         $secretarySent = (-not $group.SecretaryRequired) -or $group.SecretaryAlreadySent -or
             ($outcomes.ContainsKey('TAJEMNIK') -and $outcomes['TAJEMNIK'].Success)
-        $anySent = $mayorSent -or ($group.SecretaryRequired -and $secretarySent)
+        $anySent = ($group.MayorRequired -and $mayorSent) -or
+            ($group.SecretaryRequired -and $secretarySent)
         $anyFailed = @($outcomes.Values | Where-Object { -not $_.Success }).Count -gt 0
         $overall = if ($mayorSent -and $secretarySent) { 'ODESLÁNO' } `
             elseif ($anySent) { 'ČÁSTEČNĚ ODESLÁNO' } `

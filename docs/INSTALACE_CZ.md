@@ -79,8 +79,9 @@ Opravte všechny hlášené chyby. Kontrola vyžaduje tyto přesné hlavičky v 
 `Email - STAROSTA`, `Stav`, `Stav STAROSTA`, `Datum e-mailu STAROSTA`,
 `Stav TAJEMNÍK`, `Datum e-mailu TAJEMNÍK`.
 
-Hodnoty `není` a `neni` ve volitelných polích tajemníka znamenají, že tajemník
-není k dispozici. Automat v takovém případě připraví pouze e-mail starostovi.
+Hodnoty `není` a `neni` v polích starosty nebo tajemníka znamenají, že daný
+příjemce není k dispozici. Automat připraví e-mail jen druhému příjemci. Pokud
+chybějí oba, validace řádek odmítne.
 
 Sloupce `Datum e-mailu STAROSTA` a `Datum e-mailu TAJEMNÍK` jednou nastavte přes
 **Formát > Číslo > Datum a čas**. Automat zapisuje nativní číselnou hodnotu data;

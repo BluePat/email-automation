@@ -349,8 +349,10 @@ function Get-SiolaPreparedBatch {
         $groupRows = @($applicantGroup.Group)
         $errors = [Collections.Generic.List[string]]::new()
         $applicant = Resolve-SingleValue $groupRows Applicant 'Žadatel' $true
-        $mayorEmail = Resolve-SingleValue $groupRows MayorEmail 'Email - STAROSTA' $true $true
-        $mayorSalutation = Resolve-SingleValue $groupRows MayorSalutation 'Oslovení - STAROSTA' $true
+        $mayorEmail = Resolve-SingleValue $groupRows MayorEmail 'Email - STAROSTA' $false $true `
+            -AllowMissingMarker
+        $mayorSalutation = Resolve-SingleValue $groupRows MayorSalutation 'Oslovení - STAROSTA' `
+            ([bool]$mayorEmail.Value) -AllowMissingMarker
         $secretaryEmail = Resolve-SingleValue $groupRows SecretaryEmail 'Email - TAJEMNÍK' $false $true `
             -AllowMissingMarker
         $secretarySalutation = Resolve-SingleValue $groupRows SecretarySalutation 'Oslovení - TAJEMNÍK' `
@@ -361,6 +363,12 @@ function Get-SiolaPreparedBatch {
         }
         if (-not $secretaryEmail.Value -and $secretarySalutation.Value) {
             $errors.Add('Je vyplněno Oslovení - TAJEMNÍK, ale chybí Email - TAJEMNÍK.')
+        }
+        if (-not $mayorEmail.Value -and $mayorSalutation.Value) {
+            $errors.Add('Je vyplněno Oslovení - STAROSTA, ale chybí Email - STAROSTA.')
+        }
+        if (-not $mayorEmail.Value -and -not $secretaryEmail.Value) {
+            $errors.Add('Chybí příjemce: není k dispozici e-mail starosty ani tajemníka.')
         }
 
         if ($applicant.Value) {
@@ -394,8 +402,11 @@ function Get-SiolaPreparedBatch {
             $errors.Add("Žadatel má projekty v různých výzvách: $($calls -join ' | ').")
         }
 
-        $mayorState = Get-RoleSentState $groupRows MayorStatus 'stav STAROSTA'
-        if ($mayorState.Error) { $errors.Add($mayorState.Error) }
+        $mayorState = [pscustomobject]@{ AlreadySent = $true; Error = '' }
+        if ($mayorEmail.Value) {
+            $mayorState = Get-RoleSentState $groupRows MayorStatus 'stav STAROSTA'
+            if ($mayorState.Error) { $errors.Add($mayorState.Error) }
+        }
         $secretaryState = [pscustomobject]@{ AlreadySent = $true; Error = '' }
         if ($secretaryEmail.Value) {
             $secretaryState = Get-RoleSentState $groupRows SecretaryStatus 'stav TAJEMNÍK'
@@ -415,7 +426,7 @@ function Get-SiolaPreparedBatch {
 
         $jobs = [Collections.Generic.List[object]]::new()
         $totalGrant = [double](($projects | Measure-Object Grant -Sum).Sum)
-        if (-not $mayorState.AlreadySent) {
+        if ($mayorEmail.Value -and -not $mayorState.AlreadySent) {
             $ordinal++
             $jobs.Add((New-EmailJob -Role STAROSTA -Email $mayorEmail.Value `
                 -Salutation $mayorSalutation.Value -Applicant $applicant.Value -Projects $projects `
@@ -436,7 +447,7 @@ function Get-SiolaPreparedBatch {
             RowNumbers = [int[]]@($groupRows.RowNumber)
             ApprovalRowFingerprints = [string[]]@($groupRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
             Jobs = [object[]]@($jobs)
-            MayorRequired = $true
+            MayorRequired = [bool]$mayorEmail.Value
             MayorAlreadySent = [bool]$mayorState.AlreadySent
             SecretaryRequired = [bool]$secretaryEmail.Value
             SecretaryAlreadySent = [bool]$secretaryState.AlreadySent

@@ -120,6 +120,34 @@ Assert-Siola ($missingSecretaryInBothResult.ValidationErrorCount -eq 0 -and
     $missingSecretaryInBothResult.JobCount -eq 1) `
     'značka chybějící hodnoty musí být povolena v obou volitelných polích tajemníka'
 
+$missingMayor = New-FixtureRow
+$missingMayor.MayorEmail = 'není'
+$missingMayor.MayorSalutation = 'neni'
+$missingMayorResult = Get-SiolaPreparedBatch -Rows @($missingMayor) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($missingMayorResult.ValidationErrorCount -eq 0) `
+    'hodnota neni musí znamenat chybějícího starostu'
+Assert-Siola ($missingMayorResult.JobCount -eq 1 -and
+    $missingMayorResult.Groups[0].Jobs[0].Role -eq 'TAJEMNIK') `
+    'pro chybějícího starostu smí vzniknout jen e-mail tajemníkovi'
+
+$missingBothRecipients = New-FixtureRow
+$missingBothRecipients.MayorEmail = 'není'
+$missingBothRecipients.MayorSalutation = ''
+$missingBothRecipients.SecretaryEmail = 'neni'
+$missingBothRecipients.SecretarySalutation = ''
+$missingBothResult = Get-SiolaPreparedBatch -Rows @($missingBothRecipients) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($missingBothResult.ValidationErrorCount -eq 1 -and $missingBothResult.JobCount -eq 0) `
+    'alespoň jeden příjemce musí být k dispozici'
+
+$orphanMayorSalutation = New-FixtureRow
+$orphanMayorSalutation.MayorEmail = 'není'
+$orphanMayorResult = Get-SiolaPreparedBatch -Rows @($orphanMayorSalutation) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($orphanMayorResult.ValidationErrorCount -eq 1) `
+    'skutečné oslovení starosty bez jeho e-mailu musí být chyba'
+
 $mergedHtml = Merge-SiolaOutlookSignature `
     -MessageHtml '<div id="message">Text zprávy</div>' `
     -SignatureDocumentHtml '<html><body><div id="signature">Výchozí podpis</div></body></html>'
