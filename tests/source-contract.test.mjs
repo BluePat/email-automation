@@ -148,6 +148,13 @@ test("secretary salutation without secretary email is a validation error", () =>
   assert.match(core, /Je vyplněno Oslovení - TAJEMNÍK, ale chybí Email - TAJEMNÍK/);
 });
 
+test("explicit missing secretary markers create no secretary job", () => {
+  assert.match(core, /Test-SiolaExplicitMissingValue/);
+  assert.match(core, /@\('není', 'neni'\)/);
+  assert.match(core, /SecretaryEmail 'Email - TAJEMNÍK' \$false \$true `[\s\S]*?-AllowMissingMarker/);
+  assert.doesNotMatch(core, /MayorEmail 'Email - STAROSTA'[\s\S]{0,100}-AllowMissingMarker/);
+});
+
 test("Sent Items confirmation uses exact Items.Find lookup", () => {
   assert.match(outlook, /\$items\.Find\("\[BillingInformation\]/);
   assert.doesNotMatch(outlook, /\$limit = \[math\]::Min/);

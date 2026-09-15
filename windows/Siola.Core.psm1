@@ -25,6 +25,11 @@ function Get-CanonicalText {
     return (Get-CleanText $Value).ToLowerInvariant()
 }
 
+function Test-SiolaExplicitMissingValue {
+    param([AllowNull()]$Value)
+    return (Get-CanonicalText $Value) -in @('není', 'neni')
+}
+
 function Test-SiolaSentStatus {
     param([AllowNull()]$Value)
     $text = Get-CleanText $Value
@@ -119,13 +124,15 @@ function Get-UniqueValues {
     param(
         [object[]]$Rows,
         [string]$Property,
-        [switch]$CaseInsensitive
+        [switch]$CaseInsensitive,
+        [switch]$AllowMissingMarker
     )
     $result = [Collections.Generic.List[string]]::new()
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($row in $Rows) {
         $value = Get-DisplayText $row.$Property
         if (-not $value) { continue }
+        if ($AllowMissingMarker -and (Test-SiolaExplicitMissingValue $value)) { continue }
         $key = if ($CaseInsensitive) { Get-CanonicalText $value } else { $value }
         if ($seen.Add($key)) { $result.Add($value) }
     }
@@ -138,10 +145,15 @@ function Resolve-SingleValue {
         [string]$Property,
         [string]$Label,
         [bool]$Required,
-        [bool]$CaseInsensitive = $false
+        [bool]$CaseInsensitive = $false,
+        [switch]$AllowMissingMarker
     )
-    $values = @(Get-UniqueValues -Rows $Rows -Property $Property -CaseInsensitive:$CaseInsensitive)
-    $blankRows = @($Rows | Where-Object { -not (Get-CleanText $_.$Property) })
+    $values = @(Get-UniqueValues -Rows $Rows -Property $Property -CaseInsensitive:$CaseInsensitive `
+        -AllowMissingMarker:$AllowMissingMarker)
+    $blankRows = @($Rows | Where-Object {
+        -not (Get-CleanText $_.$Property) -or
+        ($AllowMissingMarker -and (Test-SiolaExplicitMissingValue $_.$Property))
+    })
     if (($Required -or $values.Count -gt 0) -and $blankRows.Count -gt 0) {
         return [pscustomobject]@{
             Value = ''
@@ -339,8 +351,10 @@ function Get-SiolaPreparedBatch {
         $applicant = Resolve-SingleValue $groupRows Applicant 'Žadatel' $true
         $mayorEmail = Resolve-SingleValue $groupRows MayorEmail 'Email - STAROSTA' $true $true
         $mayorSalutation = Resolve-SingleValue $groupRows MayorSalutation 'Oslovení - STAROSTA' $true
-        $secretaryEmail = Resolve-SingleValue $groupRows SecretaryEmail 'Email - TAJEMNÍK' $false $true
-        $secretarySalutation = Resolve-SingleValue $groupRows SecretarySalutation 'Oslovení - TAJEMNÍK' ([bool]$secretaryEmail.Value)
+        $secretaryEmail = Resolve-SingleValue $groupRows SecretaryEmail 'Email - TAJEMNÍK' $false $true `
+            -AllowMissingMarker
+        $secretarySalutation = Resolve-SingleValue $groupRows SecretarySalutation 'Oslovení - TAJEMNÍK' `
+            ([bool]$secretaryEmail.Value) -AllowMissingMarker
 
         foreach ($resolved in @($applicant, $mayorEmail, $mayorSalutation, $secretaryEmail, $secretarySalutation)) {
             if ($resolved.Error) { $errors.Add($resolved.Error) }

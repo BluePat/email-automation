@@ -30,8 +30,10 @@ The two recipient types are generated independently:
 | Mayor | `Email - STAROSTA` | `Oslovení - STAROSTA` |
 | Secretary | `Email - TAJEMNÍK` | `Oslovení - TAJEMNÍK` |
 
-The secretary is optional and is never placed in CC. A missing or inconsistent
-required salutation is a validation error; the code does not guess.
+The secretary is optional and is never placed in CC. Exact `není` or `neni`
+values in the optional secretary fields mean that no secretary email is generated.
+A missing or inconsistent required salutation is a validation error; the code
+does not guess.
 
 ## Safety properties
 

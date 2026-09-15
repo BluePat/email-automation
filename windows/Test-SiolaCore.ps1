@@ -99,6 +99,27 @@ $orphanSalutation.SecretaryEmail = ''
 $orphanResult = Get-SiolaPreparedBatch -Rows @($orphanSalutation) -Mode VALIDATE -RunId selftest -BatchSize 50
 Assert-Siola ($orphanResult.ValidationErrorCount -eq 1) 'oslovení tajemníka bez e-mailu musí být chyba'
 
+foreach ($missingMarker in @('není', 'neni', ' NENÍ ')) {
+    $missingSecretary = New-FixtureRow
+    $missingSecretary.SecretaryEmail = $missingMarker
+    $missingSecretary.SecretarySalutation = ''
+    $missingSecretaryResult = Get-SiolaPreparedBatch -Rows @($missingSecretary) -Mode VALIDATE `
+        -RunId selftest -BatchSize 50
+    Assert-Siola ($missingSecretaryResult.ValidationErrorCount -eq 0) `
+        "hodnota '$missingMarker' musí znamenat chybějícího tajemníka"
+    Assert-Siola ($missingSecretaryResult.JobCount -eq 1 -and
+        $missingSecretaryResult.Groups[0].Jobs[0].Role -eq 'STAROSTA') `
+        "pro chybějícího tajemníka '$missingMarker' smí vzniknout jen e-mail starostovi"
+}
+$missingSecretaryInBothFields = New-FixtureRow
+$missingSecretaryInBothFields.SecretaryEmail = 'není'
+$missingSecretaryInBothFields.SecretarySalutation = 'neni'
+$missingSecretaryInBothResult = Get-SiolaPreparedBatch -Rows @($missingSecretaryInBothFields) `
+    -Mode VALIDATE -RunId selftest -BatchSize 50
+Assert-Siola ($missingSecretaryInBothResult.ValidationErrorCount -eq 0 -and
+    $missingSecretaryInBothResult.JobCount -eq 1) `
+    'značka chybějící hodnoty musí být povolena v obou volitelných polích tajemníka'
+
 $mergedHtml = Merge-SiolaOutlookSignature `
     -MessageHtml '<div id="message">Text zprávy</div>' `
     -SignatureDocumentHtml '<html><body><div id="signature">Výchozí podpis</div></body></html>'
