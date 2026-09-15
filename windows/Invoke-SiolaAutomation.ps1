@@ -302,6 +302,17 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Konfigurace neexistuje: $ConfigPath. Nejdříve spusťte Install-SiolaAutomation.ps1."
 }
 $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($config.PSObject.Properties['signature']) {
+    $config.PSObject.Properties.Remove('signature')
+    $configFullPath = [IO.Path]::GetFullPath($ConfigPath)
+    $configDirectory = [IO.Path]::GetDirectoryName($configFullPath)
+    $migrationPath = Join-Path $configDirectory ".config-migration-$([guid]::NewGuid().ToString('N')).json"
+    try {
+        $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $migrationPath -Encoding UTF8
+        [IO.File]::Replace($migrationPath, $configFullPath, $null)
+    }
+    finally { Remove-Item -LiteralPath $migrationPath -Force -ErrorAction SilentlyContinue }
+}
 $effectiveMode = $(if ($Mode) { $Mode.ToUpperInvariant() } else { ([string]$config.mode).ToUpperInvariant() })
 if ($effectiveMode -notin @('VALIDATE', 'TEST', 'LIVE')) { throw 'Mode musí být VALIDATE, TEST nebo LIVE.' }
 if ($ApprovalDigestPath -and $effectiveMode -ne 'VALIDATE') {

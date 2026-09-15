@@ -135,8 +135,10 @@ test("non-send status writes receive the same freshness protection", () => {
 });
 
 test("Outlook verifies that SendUsingAccount stuck", () => {
-  assert.match(outlook, /\$assignedAccount = \$mail\.SendUsingAccount/);
+  assert.match(outlook, /function Assert-SiolaMailSendingAccount/);
+  assert.match(outlook, /\$assignedAccount = \$Mail\.SendUsingAccount/);
   assert.match(outlook, /assignedAccount\.SmtpAddress -ine/);
+  assert.ok((outlook.match(/Assert-SiolaMailSendingAccount -Mail \$mail/g) ?? []).length >= 4);
 });
 
 test("ambiguous US-formatted grant text fails closed", () => {
@@ -179,12 +181,19 @@ test("public examples contain no live spreadsheet or contact defaults", () => {
 
 test("email signature comes from the selected Classic Outlook account", () => {
   assert.doesNotMatch(core, /\$Signature\b/);
-  assert.doesNotMatch(installer, /Jméno do podpisu|Telefon do podpisu|Název společnosti do podpisu/);
+  assert.doesNotMatch(installer, /(?:Read-Host|Read-RequiredText)[^\n]*(?:podpis|signature)/i);
+  assert.doesNotMatch(core, /Informace obsažené v této zprávě|Before you print it|\$Signature\b/);
+  assert.match(runner, /PSObject\.Properties\.Remove\('signature'\)/);
+  assert.match(runner, /\[IO\.File\]::Replace\(\$migrationPath, \$configFullPath, \$null\)/);
   assert.match(outlook, /Get-SiolaOutlookDefaultSignature/);
   assert.match(outlook, /\$mail\.SendUsingAccount = \$OutlookContext\.Account[\s\S]*?Wait-SiolaMailDefaultSignature -Mail \$mail/);
   assert.match(outlook, /\$Mail\.Display\(\$false\)/);
   assert.match(outlook, /\$mail\.Close\(1\)/);
   assert.match(outlook, /Merge-SiolaOutlookSignature -MessageHtml/);
+  const captureStart = outlook.indexOf("function Get-SiolaOutlookDefaultSignature");
+  const captureWait = outlook.indexOf("Wait-SiolaMailDefaultSignature -Mail $mail", captureStart);
+  const capturePostAccountCheck = outlook.indexOf("Assert-SiolaMailSendingAccount -Mail $mail", captureWait);
+  assert.ok(captureStart >= 0 && captureWait > captureStart && capturePostAccountCheck > captureWait);
   assert.match(runner, /outlookSignatureFingerprint = \[string\]\$outlook\.SignatureFingerprint/);
   assert.match(enableLive, /receipt\.outlookSignatureFingerprint -cne \[string\]\$outlook\.SignatureFingerprint/);
   assert.match(runner, /config\.approvedOutlookSignatureFingerprint -cne \[string\]\$outlook\.SignatureFingerprint/);

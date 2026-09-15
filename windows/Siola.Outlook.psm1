@@ -14,6 +14,23 @@ function Release-SiolaComReference {
     }
 }
 
+function Assert-SiolaMailSendingAccount {
+    param(
+        [Parameter(Mandatory)]$Mail,
+        [Parameter(Mandatory)][string]$ExpectedSmtpAddress,
+        [string]$Purpose = 'odeslání zprávy'
+    )
+    $assignedAccount = $null
+    try {
+        $assignedAccount = $Mail.SendUsingAccount
+        if ($null -eq $assignedAccount -or
+            [string]$assignedAccount.SmtpAddress -ine $ExpectedSmtpAddress) {
+            throw "Outlook nepotvrdil odesílající účet $ExpectedSmtpAddress pro $Purpose."
+        }
+    }
+    finally { Release-SiolaComReference $assignedAccount }
+}
+
 function Test-SiolaMeaningfulHtml {
     param([AllowEmptyString()][string]$Html)
     if ([string]::IsNullOrWhiteSpace($Html)) { return $false }
@@ -44,7 +61,28 @@ function Get-SiolaOutlookSignatureFingerprint {
     $visible = [regex]::Replace($visible, '(?s)<[^>]+>', ' ')
     $visible = [Net.WebUtility]::HtmlDecode($visible).Replace([char]0x00A0, ' ')
     $visible = ([regex]::Replace($visible, '\s+', ' ')).Trim()
-    $canonical = "$visible`nimages=$($imageDescriptors.Count)`n$($imageDescriptors -join "`n")"
+    $formatDescriptors = [Collections.Generic.List[string]]::new()
+    $formatTagPattern = '(?is)<(/?)(a|p|span|div|table|tbody|tr|td|strong|b|em|i|u|br|img)\b([^>]*)>'
+    foreach ($match in [regex]::Matches($content, $formatTagPattern)) {
+        $tagName = $match.Groups[2].Value.ToLowerInvariant()
+        if ($match.Groups[1].Value) {
+            $formatDescriptors.Add("/$tagName")
+            continue
+        }
+        $attributes = [Collections.Generic.List[string]]::new()
+        foreach ($attributeName in @('style', 'href', 'src', 'alt', 'color', 'face', 'size', 'align')) {
+            $attributePattern = '(?is)\b' + [regex]::Escape($attributeName) + '\s*=\s*(["''])(.*?)\1'
+            $attributeMatch = [regex]::Match($match.Groups[3].Value, $attributePattern)
+            if (-not $attributeMatch.Success) { continue }
+            $attributeValue = [Net.WebUtility]::HtmlDecode($attributeMatch.Groups[2].Value)
+            if ($attributeValue -match '(?i)^cid:([^@]+)') { $attributeValue = "cid:$($Matches[1])" }
+            $attributeValue = ([regex]::Replace($attributeValue, '\s+', ' ')).Trim()
+            $attributes.Add("$attributeName=$attributeValue")
+        }
+        $formatDescriptors.Add("$tagName|$($attributes -join '|')")
+    }
+    $canonical = "visible=$visible`nformat=$($formatDescriptors -join "`n")`n" +
+        "images=$($imageDescriptors.Count)`n$($imageDescriptors -join "`n")"
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical)))
 }
 
@@ -74,20 +112,16 @@ function Merge-SiolaOutlookSignature {
 function Get-SiolaOutlookDefaultSignature {
     param([Parameter(Mandatory)]$OutlookContext, [int]$TimeoutSeconds = 10)
     $mail = $null
-    $assignedAccount = $null
     try {
         $mail = $OutlookContext.Application.CreateItem(0)
         $mail.SendUsingAccount = $OutlookContext.Account
-        $assignedAccount = $mail.SendUsingAccount
-        if ($null -eq $assignedAccount -or
-            [string]$assignedAccount.SmtpAddress -ine [string]$OutlookContext.SenderSmtpAddress) {
-            throw "Outlook nepotvrdil odesílající účet $($OutlookContext.SenderSmtpAddress) pro načtení podpisu."
-        }
-        Release-SiolaComReference $assignedAccount
-        $assignedAccount = $null
+        Assert-SiolaMailSendingAccount -Mail $mail `
+            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) -Purpose 'načtení podpisu'
         $mail.BodyFormat = 2
         $signatureHtml = Wait-SiolaMailDefaultSignature -Mail $mail `
             -SenderSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) -TimeoutSeconds $TimeoutSeconds
+        Assert-SiolaMailSendingAccount -Mail $mail `
+            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) -Purpose 'načtení podpisu'
         return [pscustomobject]@{
             Html = $signatureHtml
             Fingerprint = Get-SiolaOutlookSignatureFingerprint $signatureHtml
@@ -97,7 +131,6 @@ function Get-SiolaOutlookDefaultSignature {
         if ($null -ne $mail) {
             try { $mail.Close(1) } catch {}
         }
-        Release-SiolaComReference $assignedAccount
         Release-SiolaComObject $mail
     }
 }
@@ -276,17 +309,11 @@ function Send-SiolaOutlookJob {
     if ([bool]$OutlookContext.Session.Offline) { throw 'Classic Outlook je offline.' }
     $mail = $null
     $recipient = $null
-    $assignedAccount = $null
     try {
         $mail = $OutlookContext.Application.CreateItem(0)
         $mail.SendUsingAccount = $OutlookContext.Account
-        $assignedAccount = $mail.SendUsingAccount
-        if ($null -eq $assignedAccount -or
-            [string]$assignedAccount.SmtpAddress -ine [string]$OutlookContext.SenderSmtpAddress) {
-            throw "Outlook nepotvrdil odesílající účet $($OutlookContext.SenderSmtpAddress)."
-        }
-        Release-SiolaComReference $assignedAccount
-        $assignedAccount = $null
+        Assert-SiolaMailSendingAccount -Mail $mail `
+            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
         $recipient = $mail.Recipients.Add([string]$Job.To)
         if (-not $recipient.Resolve()) { throw "Outlook nedokázal ověřit příjemce $($Job.To)." }
         $resolvedSmtp = Get-SiolaRecipientSmtpAddress $recipient
@@ -297,6 +324,8 @@ function Send-SiolaOutlookJob {
         $mail.BodyFormat = 2
         $signatureHtml = Wait-SiolaMailDefaultSignature -Mail $mail `
             -SenderSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
+        Assert-SiolaMailSendingAccount -Mail $mail `
+            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
         if ((Get-SiolaOutlookSignatureFingerprint $signatureHtml) -cne
             [string]$OutlookContext.SignatureFingerprint) {
             throw 'Výchozí podpis Outlooku se během běhu změnil. Zpráva nebyla odeslána.'
@@ -314,7 +343,6 @@ function Send-SiolaOutlookJob {
             -TimeoutSeconds $ConfirmationTimeoutSeconds
     }
     finally {
-        Release-SiolaComReference $assignedAccount
         Release-SiolaComObject $recipient
         Release-SiolaComObject $mail
     }
@@ -331,4 +359,4 @@ function Disconnect-SiolaOutlook {
 }
 
 Export-ModuleMember -Function Connect-SiolaOutlook, Get-SiolaOutlookSignatureFingerprint, `
-    Merge-SiolaOutlookSignature, Send-SiolaOutlookJob, Disconnect-SiolaOutlook
+    Merge-SiolaOutlookSignature, Send-SiolaOutlookJob, Disconnect-SiolaOutlook, Test-SiolaMeaningfulHtml

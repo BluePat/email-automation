@@ -17,6 +17,8 @@ výchozí podpis pro **Nové zprávy**. Automat podpisové údaje neukládá ani
 neskládá sám. Při TESTU načte podpis z Classic Outlook, vloží jej do náhledu i
 testovacích zpráv a otevřený koncept hned zahodí. Při zpracování může krátce
 zobrazit okno nové zprávy; tím nechá Outlook vložit podpis včetně obrázků.
+V konfiguraci zůstává pouze nečitelný kontrolní otisk podpisu, nikoli jeho text
+nebo kontaktní údaje.
 
 Microsoft uvádí, že New Outlook nepodporuje Outlook Object Model ani COM. Tato
 automatizace proto s New Outlook nefunguje:

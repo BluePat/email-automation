@@ -63,6 +63,9 @@ error; the code does not guess.
 - The message body contains no manually configured signature fields. Classic
   Outlook supplies the default signature for the exact sending account. TEST
   captures it in the preview and test messages; LIVE stops if it later changes.
+  Configuration stores only an opaque approval fingerprint, never the signature
+  text or contact fields. A legacy manual `signature` object is removed atomically
+  on the next run.
 - Outlook sending is never automatically retried.
 - A message is marked `ODESLÁNO` only after its hidden job identifier is found in
   Classic Outlook's Sent Items. Offline or stuck-Outbox messages fail closed.
