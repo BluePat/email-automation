@@ -34,6 +34,53 @@ Chyby validace vracejí Plánovači úloh nenulový výsledek, i když se platn�
 předtím bezpečně zpracovaly. Zbývající zprávy mohou být odloženy před dosažením
 pětihodinového limitu běhu; zůstanou `K ODESLÁNÍ` pro další den.
 
+## Dočasné vypnutí automatu
+
+Automat lze pozastavit bez odinstalace a bez změny tabulky:
+
+1. V nabídce Start vyhledejte a otevřete **Plánovač úloh**.
+2. Vlevo otevřete **Knihovna Plánovače úloh**.
+3. Vyberte úlohu **SIOLA Email Automation**.
+4. Vpravo klikněte na **Zakázat**.
+5. Ověřte, že je úloha zakázaná. Řádky `K ODESLÁNÍ` zůstanou připravené a při
+   zakázané úloze se automaticky neodešlou.
+
+Zakázání zabrání budoucím spuštěním, ale **nezastaví právě probíhající běh**. Pokud
+Plánovač ukazuje stav **Spuštěno**, běžně nechte automat doběhnout a sledujte jeho
+výsledek. Tlačítko **Ukončit** použijte jen v nouzi: tvrdé ukončení může nastat mezi
+odesláním zprávy a zápisem výsledku do tabulky. Potom automat znovu nezapínejte,
+neměňte řádky `ZPRACOVÁVÁ SE` a postupujte podle částí **Bezpečné opakování** a
+**Bezpečnostní zámek** níže.
+
+Pro opětovné zapnutí spusťte v instalační složce postupně `VALIDATE.cmd`,
+`TEST.cmd`, zkontrolujte testovací zprávy a úplný HTML náhled a nakonec spusťte
+`ENABLE_LIVE.cmd`. Nezapínejte úlohu přímo v Plánovači; tento postup znovu ověří
+obsah, program i výchozí podpis Classic Outlooku.
+
+## Když počítač není v naplánovaný čas připravený
+
+Úloha je nastavená na jeden denní čas, na dodatečné spuštění po zmeškaném čase a
+jen pro přihlášeného uživatele, který provedl instalaci. Sama počítač neprobudí.
+
+| Situace v naplánovaný čas | Co se stane |
+| --- | --- |
+| Počítač je vypnutý | Nic se neodešle. Po zapnutí a přihlášení správného uživatele Windows zařadí zmeškaný běh; obvykle začne přibližně po 10 minutách. |
+| Počítač spí | Automat počítač neprobudí. Zmeškaný běh se zařadí po probuzení, jakmile je k dispozici přihlášená relace správného uživatele. |
+| Počítač běží, ale uživatel je odhlášený | Běh čeká na přihlášení tohoto uživatele. |
+| Obrazovka je zamknutá, ale uživatel zůstal přihlášený | Zamknutí není odhlášení; Plánovač může úlohu spustit. Classic Outlook musí být v této relaci správně nakonfigurovaný. |
+| Není internet nebo Outlook/Google nejsou dostupné | Běh bezpečně skončí chybou a vytvoří log a `ACTION_REQUIRED.txt`. Automat nemá nastavené automatické opakování po chybě; další běžný pokus je následující den. |
+| Předchozí běh ještě pokračuje | Nový běh se souběžně nespustí; nový požadavek Plánovač ignoruje. |
+
+Dodatečný běh nezačne nutně ihned po zapnutí nebo probuzení. Windows takové běhy
+řadí do fronty; jeho standardní zpoždění je přibližně 10 minut. Počítač proto po
+přihlášení hned nevypínejte. Výsledek vždy ověřte podle části **Denní kontrola**.
+
+Pokud se počítač restartuje nebo vypne **během odesílání**, nejde jen o zmeškaný
+čas. Přerušený běh se automaticky neopakuje a může po něm zůstat stav
+`ZPRACOVÁVÁ SE` nebo soubor `automation.lock`. Před jakýmkoli ručním opakováním
+zkontrolujte Odeslanou poštu, Poštu k odeslání, logy a dotčené řádky podle pokynů
+níže.
+
 ## Bezpečné opakování
 
 Před změnou chybového stavu vždy vyhledejte adresáta a předmět v Outlooku ve složce

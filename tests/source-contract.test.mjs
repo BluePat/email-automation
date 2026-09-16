@@ -9,6 +9,7 @@ const installer = await readFile(new URL("../windows/Install-SiolaAutomation.ps1
 const installCmd = await readFile(new URL("../windows/INSTALL.cmd", import.meta.url), "utf8");
 const google = await readFile(new URL("../windows/Siola.GoogleSheets.psm1", import.meta.url), "utf8");
 const enableLive = await readFile(new URL("../windows/Enable-SiolaLive.ps1", import.meta.url), "utf8");
+const operatingManual = await readFile(new URL("../docs/OBSLUHA_CZ.md", import.meta.url), "utf8");
 const configExampleText = await readFile(new URL("../windows/config.example.json", import.meta.url), "utf8");
 const configExample = JSON.parse(configExampleText);
 
@@ -53,6 +54,17 @@ test("LIVE connects Outlook before any claim is written", () => {
 
 test("installer leaves the scheduled task disabled", () => {
   assert.match(installer, /Disable-ScheduledTask -TaskName \$TaskName/);
+});
+
+test("operating manual covers safe disable and missed-run behavior", () => {
+  assert.match(operatingManual, /## Dočasné vypnutí automatu/);
+  assert.match(operatingManual, /Zakázání zabrání budoucím spuštěním, ale \*\*nezastaví právě probíhající běh\*\*/);
+  assert.match(operatingManual, /Nezapínejte úlohu přímo v Plánovači/);
+  assert.match(operatingManual, /## Když počítač není v naplánovaný čas připravený/);
+  assert.match(operatingManual, /Automat počítač neprobudí/);
+  assert.match(operatingManual, /automatické opakování po chybě/);
+  assert.match(installer, /New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew/);
+  assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$identity -LogonType Interactive/);
 });
 
 test("LIVE verifies every email-driving row using a complete fingerprint", () => {
