@@ -125,7 +125,7 @@ try {
         try {
             $listedAccount = $outlook.Session.Accounts.Item($index)
             $listedSmtp = [string]$listedAccount.SmtpAddress
-            Add-ReportLine "Účet $index: SMTP=$(Format-ExactText $listedSmtp); typ=$($listedAccount.AccountType); shoda=$([string]::Equals($listedSmtp.Trim(), $expected, [StringComparison]::OrdinalIgnoreCase))"
+            Add-ReportLine "Účet ${index}: SMTP=$(Format-ExactText $listedSmtp); typ=$($listedAccount.AccountType); shoda=$([string]::Equals($listedSmtp.Trim(), $expected, [StringComparison]::OrdinalIgnoreCase))"
         }
         finally { Release-DiagnosticComObject $listedAccount }
     }
