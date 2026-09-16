@@ -83,6 +83,20 @@ jen pro přihlášeného uživatele, který provedl instalaci. Sama počítač n
 | Počítač běží, ale uživatel je odhlášený | Běh čeká na přihlášení tohoto uživatele. |
 | Obrazovka je zamknutá, ale uživatel zůstal přihlášený | Zamknutí není odhlášení; Plánovač může úlohu spustit. Classic Outlook musí být v této relaci správně nakonfigurovaný. |
 | Není internet nebo Outlook/Google nejsou dostupné | Běh bezpečně skončí chybou a vytvoří log a `ACTION_REQUIRED.txt`. Automat nemá nastavené automatické opakování po chybě; další běžný pokus je následující den. |
+
+## Samostatná diagnostika odesílajícího účtu Outlooku
+
+Pokud TEST hlásí problém s odesílajícím účtem, spusťte
+`OUTLOOK_DIAGNOSTIC.cmd`. Tento nástroj nečte Google tabulku, nemění konfiguraci
+a nic neodesílá. Vytvoří koncept bez příjemce s předmětem
+`[SIOLA DIAGNOSTIKA – NEODESÍLAT]`, vyzkouší několik dokumentovaných způsobů
+načtení účtu a zobrazí jej v Classic Outlooku.
+
+V konceptu vizuálně zkontrolujte pole **Od**, vraťte se do černého okna a
+stiskněte Enter. Nástroj koncept zahodí. Cestu k souboru
+`outlook-diagnostic-*.txt` vypíše na konci; tento soubor předejte správci k
+vyhodnocení. Obsahuje adresy účtů z místního Outlook profilu, proto jej
+nezveřejňujte.
 | Předchozí běh ještě pokračuje | Nový běh se souběžně nespustí; nový požadavek Plánovač ignoruje. |
 
 Dodatečný běh nezačne nutně ihned po zapnutí nebo probuzení. Windows takové běhy

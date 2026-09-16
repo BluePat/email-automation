@@ -99,7 +99,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Nepodařilo se zabezpečit instalační a dato
 $runtimeFiles = @(
     'Invoke-SiolaAutomation.ps1', 'Siola.Core.psm1', 'Siola.GoogleSheets.psm1', 'Siola.Outlook.psm1',
     'Run-Validation.ps1', 'Run-Test.ps1', 'Enable-SiolaLive.ps1', 'Test-SiolaCore.ps1',
-    'VALIDATE.cmd', 'TEST.cmd', 'ENABLE_LIVE.cmd', 'TAKE_OVER.cmd'
+    'Test-SiolaOutlookDiagnostic.ps1', 'VALIDATE.cmd', 'TEST.cmd', 'ENABLE_LIVE.cmd',
+    'TAKE_OVER.cmd', 'OUTLOOK_DIAGNOSTIC.cmd'
 )
 $stagingDirectory = Join-Path ([IO.Path]::GetTempPath()) "siola-install-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $stagingDirectory | Out-Null

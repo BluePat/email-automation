@@ -9,6 +9,8 @@ const installer = await readFile(new URL("../windows/Install-SiolaAutomation.ps1
 const installCmd = await readFile(new URL("../windows/INSTALL.cmd", import.meta.url), "utf8");
 const google = await readFile(new URL("../windows/Siola.GoogleSheets.psm1", import.meta.url), "utf8");
 const enableLive = await readFile(new URL("../windows/Enable-SiolaLive.ps1", import.meta.url), "utf8");
+const outlookDiagnostic = await readFile(new URL("../windows/Test-SiolaOutlookDiagnostic.ps1", import.meta.url), "utf8");
+const outlookDiagnosticCmd = await readFile(new URL("../windows/OUTLOOK_DIAGNOSTIC.cmd", import.meta.url), "utf8");
 const operatingManual = await readFile(new URL("../docs/OBSLUHA_CZ.md", import.meta.url), "utf8");
 const configExampleText = await readFile(new URL("../windows/config.example.json", import.meta.url), "utf8");
 const configExample = JSON.parse(configExampleText);
@@ -151,7 +153,7 @@ test("non-send status writes receive the same freshness protection", () => {
   assert.match(runner, /Resolve-SiolaFreshEligibleGroup -Group \$nonSendGroup/);
 });
 
-test("Outlook verifies that SendUsingAccount stuck", () => {
+test("Outlook binds and verifies both documented sending identity properties", () => {
   assert.match(outlook, /function Assert-SiolaMailSendingIdentity/);
   assert.match(outlook, /function Set-SiolaMailSendingIdentity/);
   assert.match(outlook, /\$Mail\.Sender = \$senderEntry/);
@@ -165,6 +167,23 @@ test("Outlook verifies that SendUsingAccount stuck", () => {
   const verify = outlook.indexOf("Assert-SiolaMailSendingIdentity -Mail $mail", account);
   const send = outlook.indexOf("$mail.Send()", verify);
   assert.ok(body >= 0 && account > body && verify > account && send > verify);
+});
+
+test("standalone Outlook diagnostic is no-send and produces exact identity evidence", () => {
+  assert.doesNotMatch(outlookDiagnostic, /\.Send\s*\(/);
+  assert.doesNotMatch(outlookDiagnostic, /Recipients\.Add|\.To\s*=/);
+  assert.match(outlookDiagnostic, /DIAGNOSTIKA – NEODESÍLAT/);
+  assert.match(outlookDiagnostic, /GetInspector/);
+  assert.match(outlookDiagnostic, /\.Display\(\$false\)/);
+  assert.match(outlookDiagnostic, /\.Close\(1\)/);
+  assert.match(outlookDiagnostic, /InvokeMember\('SendUsingAccount'/);
+  assert.match(outlookDiagnostic, /U\+\{0:X4\}/);
+  assert.match(outlookDiagnostic, /Get-FileHash[^\n]+SHA256/);
+  assert.match(outlookDiagnostic, /outlook-diagnostic-/);
+  assert.match(outlookDiagnostic, /\$mail\.Recipients\.Count -ne 0/);
+  assert.match(outlookDiagnosticCmd, /Test-SiolaOutlookDiagnostic\.ps1/);
+  assert.match(installer, /'Test-SiolaOutlookDiagnostic\.ps1'/);
+  assert.match(installer, /'OUTLOOK_DIAGNOSTIC\.cmd'/);
 });
 
 test("ambiguous US-formatted grant text fails closed", () => {

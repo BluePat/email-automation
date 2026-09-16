@@ -18,6 +18,9 @@ The deployable implementation is in `windows/`:
 - `Siola.Outlook.psm1` sends through Classic Outlook's COM interface.
 - `Run-Validation.ps1`, `Run-Test.ps1`, and `Enable-SiolaLive.ps1` expose the
   operator-safe lifecycle.
+- `OUTLOOK_DIAGNOSTIC.cmd` creates and discards a recipient-free diagnostic
+  draft and records exact Classic Outlook identity-binding behavior. It never
+  sends a message or accesses Google Sheets.
 - `Test-SiolaCore.ps1` is an executable PowerShell behavioral test and is run by
   the installer before credentials or the scheduled task are configured.
 
