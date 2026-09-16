@@ -45,7 +45,7 @@ function Get-HeaderMap {
         $map.Add($name, $index)
     }
     $required = @(
-        'Výzva', 'Číslo RM', 'Žadatel', 'Název akce', 'Dotace (Kč)',
+        'Výzva', 'Žadatel', 'Název akce', 'Dotace (Kč)',
         'Oslovení - TAJEMNÍK', 'Email - TAJEMNÍK',
         'Oslovení - STAROSTA', 'Email - STAROSTA', 'Stav',
         'Stav STAROSTA', 'Datum e-mailu STAROSTA',
@@ -71,7 +71,6 @@ function ConvertTo-SourceRows {
         $rows.Add([pscustomobject]@{
             RowNumber = $index + 1
             Call = Get-RowValue $row $Headers 'Výzva'
-            RmNumber = Get-RowValue $row $Headers 'Číslo RM'
             Applicant = Get-RowValue $row $Headers 'Žadatel'
             ProjectName = Get-RowValue $row $Headers 'Název akce'
             Grant = Get-RowValue $row $Headers 'Dotace (Kč)'
@@ -195,7 +194,7 @@ function Get-SiolaExpectedClaimFingerprints {
     $fingerprints = [Collections.Generic.List[string]]::new()
     foreach ($row in $ClaimSourceRows) {
         $expected = [pscustomobject]@{
-            Call = $row.Call; RmNumber = $row.RmNumber; Applicant = $row.Applicant
+            Call = $row.Call; Applicant = $row.Applicant
             ProjectName = $row.ProjectName; Grant = $row.Grant
             SecretarySalutation = $row.SecretarySalutation; SecretaryEmail = $row.SecretaryEmail
             MayorSalutation = $row.MayorSalutation; MayorEmail = $row.MayorEmail

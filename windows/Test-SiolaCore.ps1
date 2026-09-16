@@ -14,7 +14,6 @@ function New-FixtureRow {
     return [pscustomobject]@{
         RowNumber = $RowNumber
         Call = 'RES+3/2022'
-        RmNumber = '12345'
         Applicant = 'Obec Příkladov'
         ProjectName = 'Instalace FVE v obci Příkladov'
         Grant = 1057223
@@ -59,12 +58,25 @@ Assert-Siola ($exactResult.JobCount -eq 0) 'stav musí být přesná hodnota K O
 
 $duplicate = New-FixtureRow -RowNumber 3
 $duplicateResult = Get-SiolaPreparedBatch -Rows @($base, $duplicate) -Mode VALIDATE -RunId selftest -BatchSize 50
-Assert-Siola ($duplicateResult.JobCount -eq 2) 'duplicitní Číslo RM se nesmí odeslat dvakrát'
+Assert-Siola ($duplicateResult.JobCount -eq 2) 'duplicitní projekt se nesmí odeslat dvakrát'
 Assert-Siola ($duplicateResult.Groups[0].Jobs[0].BodyHtml.Contains('1.057.223,- Kč')) 'duplicitní dotace se nesmí sečíst dvakrát'
+
+$secondProject = New-FixtureRow -RowNumber 3
+$secondProject.ProjectName = 'Rekonstrukce veřejného osvětlení'
+$secondProject.Grant = 2000000
+$twoProjectResult = Get-SiolaPreparedBatch -Rows @($base, $secondProject) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($twoProjectResult.ValidationErrorCount -eq 0 -and $twoProjectResult.JobCount -eq 2) `
+    'různé názvy projektů ve stejné výzvě musí být povoleny bez RM'
+$twoProjectBody = [Net.WebUtility]::HtmlDecode([string]$twoProjectResult.Groups[0].Jobs[0].BodyHtml)
+Assert-Siola ($twoProjectBody.Contains('Instalace FVE v obci Příkladov') -and
+    $twoProjectBody.Contains('Rekonstrukce veřejného osvětlení')) `
+    'e-mail musí obsahovat oba různé projekty stejné výzvy'
+Assert-Siola ($twoProjectBody.Contains('3.057.223,- Kč')) `
+    'dotace různých projektů stejné výzvy se musí sečíst'
 
 $laterCall = New-FixtureRow -RowNumber 3
 $laterCall.Call = 'RES+4/2025'
-$laterCall.RmNumber = '67890'
 $laterCall.ProjectName = 'Jiný projekt v obci Příkladov'
 $laterCall.Grant = 2000000
 $laterCall.MayorEmail = 'new-mayor@example.com'
@@ -93,7 +105,6 @@ $completedFirst.MayorStatus = 'ODESLÁNO | previous-mayor'
 $completedFirst.SecretaryStatus = 'ODESLÁNO | previous-secretary'
 $completedLater = New-FixtureRow -RowNumber 3
 $completedLater.Call = 'RES+4/2025'
-$completedLater.RmNumber = '67890'
 $completedLater.ProjectName = 'Jiný projekt v obci Příkladov'
 $completedLater.MayorStatus = 'ODESLÁNO | previous-mayor'
 $completedLater.SecretaryStatus = 'ODESLÁNO | previous-secretary'
@@ -111,7 +122,6 @@ Assert-Siola ((Get-SiolaBatchApprovalFingerprint $completedOrderA) -cne
 
 $missingLaterCall = New-FixtureRow -RowNumber 3
 $missingLaterCall.Call = ''
-$missingLaterCall.RmNumber = '67890'
 $missingLaterResult = Get-SiolaPreparedBatch -Rows @($base, $missingLaterCall) -Mode VALIDATE `
     -RunId selftest -BatchSize 50
 Assert-Siola ($missingLaterResult.ValidationErrorCount -eq 1) `
@@ -128,7 +138,8 @@ $historical.MayorStatus = 'ODESLÁNO | old-job'
 $historical.SecretaryStatus = 'ODESLÁNO | old-job-2'
 $newDuplicate = New-FixtureRow -RowNumber 3
 $historicalResult = Get-SiolaPreparedBatch -Rows @($historical, $newDuplicate) -Mode VALIDATE -RunId selftest -BatchSize 50
-Assert-Siola ($historicalResult.ValidationErrorCount -eq 1 -and $historicalResult.JobCount -eq 0) 'historicky odeslané RM se nesmí znovu připravit'
+Assert-Siola ($historicalResult.ValidationErrorCount -eq 1 -and $historicalResult.JobCount -eq 0) `
+    'historicky odeslaný projekt ve stejné výzvě se nesmí znovu připravit'
 
 $blankDuplicate = New-FixtureRow -RowNumber 3
 $blankDuplicate.MayorEmail = ''

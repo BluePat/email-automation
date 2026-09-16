@@ -76,14 +76,23 @@ Nic nemění a nic neodesílá.
 Opravte všechny hlášené chyby. Kontrola vyžaduje tyto přesné hlavičky v prvním
 řádku listu `Obce a města`:
 
-`Výzva`, `Číslo RM`, `Žadatel`, `Název akce`, `Dotace (Kč)`,
+`Výzva`, `Žadatel`, `Název akce`, `Dotace (Kč)`,
 `Oslovení - TAJEMNÍK`, `Email - TAJEMNÍK`, `Oslovení - STAROSTA`,
 `Email - STAROSTA`, `Stav`, `Stav STAROSTA`, `Datum e-mailu STAROSTA`,
 `Stav TAJEMNÍK`, `Datum e-mailu TAJEMNÍK`.
 
+Sloupce související s RM automat nepoužívá. Mohou v tabulce zůstat, jejich
+hodnoty nemají vliv na validaci, seskupení ani obsah e-mailu.
+
 Hodnoty `není` a `neni` v polích starosty nebo tajemníka znamenají, že daný
 příjemce není k dispozici. Automat připraví e-mail jen druhému příjemci. Pokud
 chybějí oba, validace řádek odmítne.
+
+Každé e-mailové pole smí obsahovat právě jednu adresu ve tvaru
+`jmeno@domena.cz`. Neplatná adresa zastaví celého žadatele; automat ji nepřeskočí
+a nebude hádat opravu. Adresu opravte, nebo pokud daný kontakt opravdu není
+k dispozici, napište do jeho e-mailu `není` a jeho oslovení nechte prázdné nebo
+v něm také použijte `není`.
 
 Pokud má jeden žadatel připravené řádky z více hodnot `Výzva`, automat vytvoří
 e-mail pouze pro výzvu na nejnižším čísle řádku. Projekty této výzvy může spojit

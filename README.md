@@ -46,7 +46,8 @@ error; the code does not guess.
 - Columns are located by exact header text, not hard-coded letters.
 - Applicants are grouped first. If an applicant has several calls, only the call
   on that applicant's lowest sheet row is emailed. Projects within that call are
-  deduplicated by `Žadatel + Číslo RM`, including already-sent historical rows.
+  deduplicated by `Žadatel + Výzva + Název akce`, including already-sent
+  historical rows. All RM-related columns are ignored.
   After at least one recipient is confirmed in Sent Items, ready rows from the
   applicant's other calls become `KONTAKTOVÁNO JINÝM PROJEKTEM`.
 - Conflicting duplicates within the selected call, bad grants, invalid addresses,

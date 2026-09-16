@@ -13,13 +13,19 @@
 | `CHYBA` | Outlook zprávu nepotvrdil v Odeslané poště nebo nastala jiná provozní chyba. |
 
 `K ODESLÁNÍ` je současně schválení obsahu. Dokud je tato hodnota nastavena,
-neupravujte příjemce, oslovení, žadatele, číslo RM, projekt, výzvu ani dotaci.
+neupravujte příjemce, oslovení, žadatele, projekt, výzvu ani dotaci.
 Před opravou nejprve odstraňte stav, proveďte změnu a kontrolu a teprve potom vraťte
 přesné `K ODESLÁNÍ`. Automat před každým žadatelem kontroluje, že se schválená data
 od načtení nezměnila.
 
 Podrobný stav a datum se zapisují zvlášť pro starostu a tajemníka. Hodnota za
 svislítkem je identifikátor konkrétního pokusu.
+
+Neplatný e-mail je chyba validace, nikoli chybějící kontakt. Pole musí obsahovat
+právě jednu adresu ve tvaru `jmeno@domena.cz`; více adres ani doprovodný text
+nejsou povoleny. Adresu opravte, nebo pro skutečně chybějící kontakt použijte
+hodnotu `není` a odstraňte jeho oslovení. Automat tak nikdy neposílá na adresu,
+kterou nedokázal jednoznačně ověřit.
 
 Má-li žadatel více výzev ve stavu `K ODESLÁNÍ`, rozhoduje nejnižší číslo řádku.
 E-mail obsahuje pouze projekty z výzvy na tomto řádku. Řádky ostatních výzev se

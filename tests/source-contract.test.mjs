@@ -68,11 +68,16 @@ test("operating manual covers safe disable and missed-run behavior", () => {
 });
 
 test("LIVE verifies every email-driving row using a complete fingerprint", () => {
-  for (const field of ["Call", "RmNumber", "Applicant", "ProjectName", "Grant", "SecretarySalutation", "SecretaryEmail", "MayorSalutation", "MayorEmail", "Status", "MayorStatus", "SecretaryStatus"]) {
+  for (const field of ["Call", "Applicant", "ProjectName", "Grant", "SecretarySalutation", "SecretaryEmail", "MayorSalutation", "MayorEmail", "Status", "MayorStatus", "SecretaryStatus"]) {
     assert.match(runner, new RegExp(`${field} =`));
   }
   assert.match(runner, /Resolve-SiolaFreshEligibleGroup/);
   assert.match(runner, /Resolve-SiolaClaimedGroup/);
+});
+
+test("RM-related columns do not drive validation, grouping, or approval", () => {
+  assert.doesNotMatch(core, /RmNumber|Číslo RM/);
+  assert.doesNotMatch(runner, /RmNumber|Číslo RM/);
 });
 
 test("the Google Sheet is bound to one installation", () => {

@@ -183,39 +183,38 @@ function Get-RoleSentState {
 
 function Get-Projects {
     param([object[]]$Rows, [Collections.Generic.List[string]]$Errors)
-    $groups = @($Rows | Group-Object { Get-CanonicalText $_.RmNumber })
+    $namedRows = [Collections.Generic.List[object]]::new()
+    foreach ($row in $Rows) {
+        if (-not (Get-DisplayText $row.ProjectName)) {
+            $Errors.Add("Řádek $($row.RowNumber): chybí Název akce.")
+        }
+        else { $namedRows.Add($row) }
+    }
+    $groups = @($namedRows | Group-Object { Get-CanonicalText $_.ProjectName })
     $projects = [Collections.Generic.List[object]]::new()
 
     foreach ($group in $groups) {
         $projectRows = @($group.Group)
-        $rm = Get-DisplayText $projectRows[0].RmNumber
-        if (-not $rm) {
-            foreach ($row in $projectRows) { $Errors.Add("Řádek $($row.RowNumber): chybí Číslo RM.") }
-            continue
-        }
-
-        $names = @(Get-UniqueValues -Rows $projectRows -Property ProjectName)
+        $name = Get-DisplayText $projectRows[0].ProjectName
         $calls = @(Get-UniqueValues -Rows $projectRows -Property Call)
         $amounts = @($projectRows | ForEach-Object { ConvertFrom-GrantValue $_.Grant })
 
-        if ($names.Count -ne 1) { $Errors.Add("Číslo RM ${rm}: chybí nebo se liší Název akce.") }
-        if ($calls.Count -ne 1) { $Errors.Add("Číslo RM ${rm}: chybí nebo se liší Výzva.") }
+        if ($calls.Count -ne 1) { $Errors.Add("Projekt '${name}': chybí nebo se liší Výzva.") }
         if (@($amounts | Where-Object { [double]::IsNaN($_) -or $_ -le 0 }).Count -gt 0) {
-            $Errors.Add("Číslo RM ${rm}: Dotace (Kč) musí být kladné číslo.")
+            $Errors.Add("Projekt '${name}': Dotace (Kč) musí být kladné číslo.")
         }
 
         $validAmounts = @($amounts | Where-Object { -not [double]::IsNaN($_) })
         if ($validAmounts.Count -gt 1) {
             $first = $validAmounts[0]
             if (@($validAmounts | Where-Object { [math]::Abs($_ - $first) -gt 0.01 }).Count -gt 0) {
-                $Errors.Add("Číslo RM ${rm}: duplicitní řádky mají rozdílnou Dotaci (Kč).")
+                $Errors.Add("Projekt '${name}': duplicitní řádky mají rozdílnou Dotaci (Kč).")
             }
         }
 
-        if ($names.Count -eq 1 -and $calls.Count -eq 1 -and $validAmounts.Count -gt 0) {
+        if ($calls.Count -eq 1 -and $validAmounts.Count -gt 0) {
             $projects.Add([pscustomobject]@{
-                Rm = $rm
-                Name = $names[0]
+                Name = $name
                 Call = $calls[0]
                 Grant = [double]$validAmounts[0]
             })
@@ -228,7 +227,6 @@ function Get-SiolaRowApprovalFingerprint {
     param([Parameter(Mandatory)]$Row)
     $payload = [ordered]@{
         Call = [string]$Row.Call
-        RmNumber = [string]$Row.RmNumber
         Applicant = [string]$Row.Applicant
         ProjectName = [string]$Row.ProjectName
         Grant = $Row.Grant
@@ -387,26 +385,30 @@ function Get-SiolaPreparedBatch {
             foreach ($applicantRow in $applicantRows) {
                 $null = $currentRowNumbers.Add([int]$applicantRow.RowNumber)
             }
+            $checkedHistoricalProjects = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             foreach ($groupRow in $groupRows) {
-                $rmKey = Get-CanonicalText $groupRow.RmNumber
-                if (-not $rmKey) { continue }
+                $projectKey = Get-CanonicalText $groupRow.ProjectName
+                $callKey = Get-CanonicalText $groupRow.Call
+                if (-not $projectKey -or -not $callKey) { continue }
+                if (-not $checkedHistoricalProjects.Add("$callKey`n$projectKey")) { continue }
                 $historicalMatches = @($Rows | Where-Object {
                     -not $currentRowNumbers.Contains([int]$_.RowNumber) -and
                     (Get-CanonicalText $_.Applicant) -eq (Get-CanonicalText $applicant.Value) -and
-                    (Get-CanonicalText $_.RmNumber) -eq $rmKey -and
+                    (Get-CanonicalText $_.Call) -eq $callKey -and
+                    (Get-CanonicalText $_.ProjectName) -eq $projectKey -and
                     ((Test-SiolaSentStatus $_.Status) -or (Test-SiolaSentStatus $_.MayorStatus) -or
                         (Test-SiolaSentStatus $_.SecretaryStatus))
                 })
                 if ($historicalMatches.Count -gt 0) {
-                    $errors.Add("Číslo RM $($groupRow.RmNumber) už existuje jako odeslané na řádcích: $($historicalMatches.RowNumber -join ', ').")
+                    $errors.Add("Projekt '$($groupRow.ProjectName)' ve stejné výzvě už existuje jako odeslaný na řádcích: $($historicalMatches.RowNumber -join ', ').")
                 }
             }
         }
         if ($mayorEmail.Value -and -not (Test-EmailAddress $mayorEmail.Value)) {
-            $errors.Add('Email - STAROSTA nemá platný formát.')
+            $errors.Add('Email - STAROSTA nemá platný formát (musí obsahovat právě jednu adresu ve tvaru jmeno@domena.cz).')
         }
         if ($secretaryEmail.Value -and -not (Test-EmailAddress $secretaryEmail.Value)) {
-            $errors.Add('Email - TAJEMNÍK nemá platný formát.')
+            $errors.Add('Email - TAJEMNÍK nemá platný formát (musí obsahovat právě jednu adresu ve tvaru jmeno@domena.cz).')
         }
 
         $projects = @(Get-Projects -Rows $groupRows -Errors $errors)
