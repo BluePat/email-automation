@@ -154,8 +154,13 @@ test("non-send status writes receive the same freshness protection", () => {
 test("Outlook verifies that SendUsingAccount stuck", () => {
   assert.match(outlook, /function Assert-SiolaMailSendingAccount/);
   assert.match(outlook, /\$assignedAccount = \$Mail\.SendUsingAccount/);
-  assert.match(outlook, /assignedAccount\.SmtpAddress -ine/);
-  assert.ok((outlook.match(/Assert-SiolaMailSendingAccount -Mail \$mail/g) ?? []).length >= 2);
+  assert.match(outlook, /\$actualSmtpAddress -ine \$ExpectedSmtpAddress/);
+  assert.equal((outlook.match(/Assert-SiolaMailSendingAccount -Mail \$mail/g) ?? []).length, 1);
+  const body = outlook.indexOf("$mail.HTMLBody = [string]$Job.BodyHtml");
+  const account = outlook.indexOf("$mail.SendUsingAccount = $OutlookContext.Account", body);
+  const verify = outlook.indexOf("Assert-SiolaMailSendingAccount -Mail $mail", account);
+  const send = outlook.indexOf("$mail.Send()", verify);
+  assert.ok(body >= 0 && account > body && verify > account && send > verify);
 });
 
 test("ambiguous US-formatted grant text fails closed", () => {

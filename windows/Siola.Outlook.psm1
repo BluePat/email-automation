@@ -23,9 +23,12 @@ function Assert-SiolaMailSendingAccount {
     $assignedAccount = $null
     try {
         $assignedAccount = $Mail.SendUsingAccount
-        if ($null -eq $assignedAccount -or
-            [string]$assignedAccount.SmtpAddress -ine $ExpectedSmtpAddress) {
-            throw "Outlook nepotvrdil odesílající účet $ExpectedSmtpAddress pro $Purpose."
+        $actualSmtpAddress = if ($null -eq $assignedAccount) {
+            '<žádný účet>'
+        }
+        else { ([string]$assignedAccount.SmtpAddress).Trim() }
+        if ($actualSmtpAddress -ine $ExpectedSmtpAddress) {
+            throw "Outlook nepotvrdil odesílající účet pro $Purpose. Očekáváno: '$ExpectedSmtpAddress'; Outlook vrátil: '$actualSmtpAddress'."
         }
     }
     finally { Release-SiolaComReference $assignedAccount }
@@ -195,9 +198,6 @@ function Send-SiolaOutlookJob {
     $recipient = $null
     try {
         $mail = $OutlookContext.Application.CreateItem(0)
-        $mail.SendUsingAccount = $OutlookContext.Account
-        Assert-SiolaMailSendingAccount -Mail $mail `
-            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
         $recipient = $mail.Recipients.Add([string]$Job.To)
         if (-not $recipient.Resolve()) { throw "Outlook nedokázal ověřit příjemce $($Job.To)." }
         $resolvedSmtp = Get-SiolaRecipientSmtpAddress $recipient
@@ -207,8 +207,12 @@ function Send-SiolaOutlookJob {
         $mail.Subject = [string]$Job.Subject
         $mail.BodyFormat = 2
         $mail.HTMLBody = [string]$Job.BodyHtml
+        # Microsoft documents this order: populate and resolve the message first,
+        # then assign SendUsingAccount immediately before Send().
+        $mail.SendUsingAccount = $OutlookContext.Account
         Assert-SiolaMailSendingAccount -Mail $mail `
-            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
+            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) `
+            -Purpose 'finální kontrolu před odesláním'
         $mail.BillingInformation = [string]$Job.JobId
         $mail.DeleteAfterSubmit = $false
         $mail.Send()
