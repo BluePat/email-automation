@@ -171,6 +171,23 @@ test("explicit missing role markers suppress only that recipient", () => {
   assert.match(runner, /\$mayorSent = \(-not \$group\.MayorRequired\)/);
 });
 
+test("only the first call per applicant is emailed and later calls receive a distinct state", () => {
+  assert.match(core, /\$applicantRows = @\(\$applicantGroup\.Group \| Sort-Object RowNumber\)/);
+  assert.match(core, /\$primaryCallKey = Get-CanonicalText \$applicantRows\[0\]\.Call/);
+  assert.match(core, /PrimaryRowNumbers = \[int\[\]\]@\(\$groupRows\.RowNumber\)/);
+  assert.match(core, /SuppressedRowNumbers = \[int\[\]\]@\(\$suppressedRows\.RowNumber\)/);
+  assert.match(core, /SelectedCall = \[string\]\$applicantRows\[0\]\.Call/);
+  assert.match(core, /Chybí Výzva na řádcích/);
+  assert.ok((core.match(/selectedCall = \[string\]/g) ?? []).length >= 2);
+  assert.doesNotMatch(core, /Žadatel má projekty v různých výzvách/);
+  assert.match(runner, /function Test-SiolaSuppressedProjectRow/);
+  assert.match(runner, /\$rowCall -cne \$selectedCall/);
+  assert.doesNotMatch(runner, /SuppressedRowNumbers\) -contains \$RowNumber/);
+  assert.match(runner, /KONTAKTOVÁNO JINÝM PROJEKTEM/);
+  assert.match(runner, /\$suppressedStatus = if \(\$anySent\)/);
+  assert.match(runner, /if \(-not \(Test-SiolaSuppressedProjectRow[\s\S]*?foreach \(\$claimJob in \$group\.Jobs\)/);
+});
+
 test("Sent Items confirmation uses exact Items.Find lookup", () => {
   assert.match(outlook, /\$items\.Find\("\[BillingInformation\]/);
   assert.doesNotMatch(outlook, /\$limit = \[math\]::Min/);

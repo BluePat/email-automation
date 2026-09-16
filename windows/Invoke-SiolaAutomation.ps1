@@ -134,6 +134,14 @@ function Set-SiolaTargetUpdates {
     Set-SiolaRowTargetCells -SpreadsheetId $SpreadsheetId -AccessToken $AccessToken -TargetUpdates $payload
 }
 
+function Test-SiolaSuppressedProjectRow {
+    param([Parameter(Mandatory)]$Group, [Parameter(Mandatory)]$Row)
+    if (-not $Group.PSObject.Properties['SelectedCall']) { return $false }
+    $selectedCall = ([regex]::Replace(([string]$Group.SelectedCall), '\s+', ' ')).Trim().ToLowerInvariant()
+    $rowCall = ([regex]::Replace(([string]$Row.Call), '\s+', ' ')).Trim().ToLowerInvariant()
+    return $rowCall -cne $selectedCall
+}
+
 function Assert-SiolaTargetApproval {
     param([Parameter(Mandatory)]$Group, [Parameter(Mandatory)][object[]]$Targets)
     $expected = @($Group.ApprovalRowFingerprints | Sort-Object)
@@ -194,9 +202,11 @@ function Get-SiolaExpectedClaimFingerprints {
             Status = "ZPRACOVÁVÁ SE | $RunId"
             MayorStatus = $row.MayorStatus; SecretaryStatus = $row.SecretaryStatus
         }
-        foreach ($job in $Group.Jobs) {
-            if ($job.Role -eq 'STAROSTA') { $expected.MayorStatus = "ZPRACOVÁVÁ SE | $($job.JobId)" }
-            else { $expected.SecretaryStatus = "ZPRACOVÁVÁ SE | $($job.JobId)" }
+        if (-not (Test-SiolaSuppressedProjectRow -Group $Group -Row $row)) {
+            foreach ($job in $Group.Jobs) {
+                if ($job.Role -eq 'STAROSTA') { $expected.MayorStatus = "ZPRACOVÁVÁ SE | $($job.JobId)" }
+                else { $expected.SecretaryStatus = "ZPRACOVÁVÁ SE | $($job.JobId)" }
+            }
         }
         $fingerprints.Add((Get-SiolaRowApprovalFingerprint $expected))
     }
@@ -260,10 +270,15 @@ function Write-SiolaPreviewReport {
             $recipient = [Net.WebUtility]::HtmlEncode([string]$job.IntendedTo)
             $subject = [Net.WebUtility]::HtmlEncode([string]$job.Subject)
             $rows = [Net.WebUtility]::HtmlEncode(($job.RowNumbers -join ', '))
+            $suppressedNote = if (@($group.SuppressedRowNumbers).Count -gt 0) {
+                $suppressedRows = [Net.WebUtility]::HtmlEncode(($group.SuppressedRowNumbers -join ', '))
+                "<br><strong>Jiné výzvy:</strong> řádky $suppressedRows nebudou odeslány a po potvrzeném kontaktu dostanou stav KONTAKTOVÁNO JINÝM PROJEKTEM."
+            }
+            else { '' }
             $rendered = Merge-SiolaOutlookSignature -MessageHtml ([string]$job.BodyHtml) `
                 -SignatureDocumentHtml ([string]$OutlookContext.SignatureHtml)
             $srcdoc = [Net.WebUtility]::HtmlEncode($rendered)
-            $sections.Add("<section><h2>$applicant – $role</h2><p><strong>Příjemce:</strong> $recipient<br><strong>Řádky:</strong> $rows<br><strong>Předmět:</strong> $subject</p><iframe class=`"email`" title=`"Náhled e-mailu`" srcdoc=`"$srcdoc`"></iframe></section>")
+            $sections.Add("<section><h2>$applicant – $role</h2><p><strong>Příjemce:</strong> $recipient<br><strong>Řádky e-mailu:</strong> $rows<br><strong>Předmět:</strong> $subject$suppressedNote</p><iframe class=`"email`" title=`"Náhled e-mailu`" srcdoc=`"$srcdoc`"></iframe></section>")
         }
     }
     $html = @"
@@ -445,6 +460,7 @@ try {
         applicants = $batch.SelectedApplicantCount
         jobs = $batch.JobCount
         validationErrors = $batch.ValidationErrorCount
+        suppressedRows = [int](($batch.Groups | ForEach-Object { @($_.SuppressedRowNumbers).Count } | Measure-Object -Sum).Sum)
     }
     foreach ($invalid in $batch.InvalidGroups) {
         Write-SiolaLog ERROR VALIDATION_ERROR @{
@@ -544,7 +560,12 @@ try {
                 -AccessToken $accessToken -BuildUpdates {
                     param($target)
                     if (-not $isInvalid) {
-                        return ,(New-TargetCellUpdate $headers['Stav'] 'ODESLÁNO')
+                        $completedStatus = if (Test-SiolaSuppressedProjectRow -Group $nonSendGroup `
+                            -Row $target.Row) {
+                            'KONTAKTOVÁNO JINÝM PROJEKTEM'
+                        }
+                        else { 'ODESLÁNO' }
+                        return ,(New-TargetCellUpdate $headers['Stav'] $completedStatus)
                     }
                     $cellUpdates = [Collections.Generic.List[object]]::new()
                     $cellUpdates.Add((New-TargetCellUpdate $headers['Stav'] 'CHYBA VALIDACE'))
@@ -630,9 +651,11 @@ try {
                 param($target)
                 $claimUpdates = [Collections.Generic.List[object]]::new()
                 $claimUpdates.Add((New-TargetCellUpdate $headers['Stav'] "ZPRACOVÁVÁ SE | $($script:RunId)"))
-                foreach ($claimJob in $group.Jobs) {
-                    $statusColumn = if ($claimJob.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
-                    $claimUpdates.Add((New-TargetCellUpdate $headers[$statusColumn] "ZPRACOVÁVÁ SE | $($claimJob.JobId)"))
+                if (-not (Test-SiolaSuppressedProjectRow -Group $group -Row $target.Row)) {
+                    foreach ($claimJob in $group.Jobs) {
+                        $statusColumn = if ($claimJob.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
+                        $claimUpdates.Add((New-TargetCellUpdate $headers[$statusColumn] "ZPRACOVÁVÁ SE | $($claimJob.JobId)"))
+                    }
                 }
                 return @($claimUpdates)
             }
@@ -712,6 +735,14 @@ try {
                 -AccessToken $accessToken -BuildUpdates {
                     param($target)
                     $finalUpdates = [Collections.Generic.List[object]]::new()
+                    if (Test-SiolaSuppressedProjectRow -Group $group -Row $target.Row) {
+                        $suppressedStatus = if ($anySent) {
+                            'KONTAKTOVÁNO JINÝM PROJEKTEM'
+                        }
+                        else { $overall }
+                        $finalUpdates.Add((New-TargetCellUpdate $headers['Stav'] $suppressedStatus))
+                        return @($finalUpdates)
+                    }
                     foreach ($outcome in $outcomes.Values) {
                         $statusColumn = if ($outcome.Job.Role -eq 'STAROSTA') { 'Stav STAROSTA' } else { 'Stav TAJEMNÍK' }
                         $dateColumn = if ($outcome.Job.Role -eq 'STAROSTA') { 'Datum e-mailu STAROSTA' } else { 'Datum e-mailu TAJEMNÍK' }

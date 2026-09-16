@@ -44,10 +44,13 @@ error; the code does not guess.
   edit and revalidate, then restore it.
 - Only the sheet named exactly `Obce a města` is accessed.
 - Columns are located by exact header text, not hard-coded letters.
-- Applicants are grouped and projects are deduplicated by `Žadatel + Číslo RM`,
-  including already-sent historical rows.
-- Conflicting duplicates, mixed calls, bad grants, invalid addresses, or partially
-  sent duplicate rows fail validation.
+- Applicants are grouped first. If an applicant has several calls, only the call
+  on that applicant's lowest sheet row is emailed. Projects within that call are
+  deduplicated by `Žadatel + Číslo RM`, including already-sent historical rows.
+  After at least one recipient is confirmed in Sent Items, ready rows from the
+  applicant's other calls become `KONTAKTOVÁNO JINÝM PROJEKTEM`.
+- Conflicting duplicates within the selected call, bad grants, invalid addresses,
+  or partially sent duplicate rows fail validation.
 - LIVE verifies that the sheet belongs to this one installation, preflights Outlook,
   acquires an expiring document-level run lease, and then rereads, fingerprints,
   and claims only one applicant at a time.

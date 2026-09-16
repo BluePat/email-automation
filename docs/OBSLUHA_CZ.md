@@ -7,6 +7,7 @@
 | `K ODESLÁNÍ` | Připraveno pro příští běh. Hodnota musí být přesná. |
 | `ZPRACOVÁVÁ SE` | Automat řádky rezervoval. Nevracet automaticky. |
 | `ODESLÁNO` | Označená zpráva byla potvrzena ve složce Odeslaná pošta Classic Outlooku. |
+| `KONTAKTOVÁNO JINÝM PROJEKTEM` | Řádek patří k jiné výzvě stejného žadatele; alespoň jeden e-mail pro jeho první výzvu byl potvrzen jako odeslaný. |
 | `ČÁSTEČNĚ ODESLÁNO` | Jeden příjemce uspěl a druhý selhal. |
 | `CHYBA VALIDACE` | Chybí údaj nebo jsou duplicitní řádky v rozporu. |
 | `CHYBA` | Outlook zprávu nepotvrdil v Odeslané poště nebo nastala jiná provozní chyba. |
@@ -19,6 +20,13 @@ od načtení nezměnila.
 
 Podrobný stav a datum se zapisují zvlášť pro starostu a tajemníka. Hodnota za
 svislítkem je identifikátor konkrétního pokusu.
+
+Má-li žadatel více výzev ve stavu `K ODESLÁNÍ`, rozhoduje nejnižší číslo řádku.
+E-mail obsahuje pouze projekty z výzvy na tomto řádku. Řádky ostatních výzev se
+rezervují společně, ale jejich dílčí stavy starosty a tajemníka se nemění. Stav
+`KONTAKTOVÁNO JINÝM PROJEKTEM` se jim zapíše až po potvrzeném kontaktu alespoň
+jednoho příjemce. Při úplném neúspěchu dostanou stejně jako vybraná výzva stav
+`CHYBA`, aby se další výzva další den neodeslala místo ní.
 
 ## Denní kontrola
 
@@ -90,6 +98,10 @@ Před změnou chybového stavu vždy vyhledejte adresáta a předmět v Outlooku
 - Pokud prokazatelně neexistuje, opravte příčinu a změňte obecný `Stav` na
   `K ODESLÁNÍ` u **všech řádků stejného žadatele, které patří do společného
   e-mailu**. Nikdy nevracejte jen jeden projekt z víceprojektového e-mailu.
+- Pokud úplně selhal kontakt pro žadatele s více výzvami a stav `CHYBA` proto
+  dostaly i jeho další výzvy, vraťte na `K ODESLÁNÍ` všechny tyto dotčené řádky
+  společně. Jinak by se po opravě správně nezapsal stav
+  `KONTAKTOVÁNO JINÝM PROJEKTEM`.
 - Dílčí stav `ODESLÁNO` pro již úspěšného příjemce ponechte. Automat jej přeskočí.
 - Pokud si nejste jistí, nic neresetujte a úlohu vypněte.
 

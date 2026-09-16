@@ -346,9 +346,20 @@ function Get-SiolaPreparedBatch {
     foreach ($applicantGroup in $applicantGroups) {
         if ($selected -ge $BatchSize) { break }
         $selected++
-        $groupRows = @($applicantGroup.Group)
+        $applicantRows = @($applicantGroup.Group | Sort-Object RowNumber)
+        $primaryCallKey = Get-CanonicalText $applicantRows[0].Call
+        $groupRows = @($applicantRows | Where-Object {
+            (Get-CanonicalText $_.Call) -ceq $primaryCallKey
+        })
+        $suppressedRows = @($applicantRows | Where-Object {
+            (Get-CanonicalText $_.Call) -cne $primaryCallKey
+        })
         $errors = [Collections.Generic.List[string]]::new()
-        $applicant = Resolve-SingleValue $groupRows Applicant 'Žadatel' $true
+        $missingCallRows = @($applicantRows | Where-Object { -not (Get-CleanText $_.Call) })
+        if ($missingCallRows.Count -gt 0) {
+            $errors.Add("Chybí Výzva na řádcích: $($missingCallRows.RowNumber -join ', ').")
+        }
+        $applicant = Resolve-SingleValue $applicantRows Applicant 'Žadatel' $true
         $mayorEmail = Resolve-SingleValue $groupRows MayorEmail 'Email - STAROSTA' $false $true `
             -AllowMissingMarker
         $mayorSalutation = Resolve-SingleValue $groupRows MayorSalutation 'Oslovení - STAROSTA' `
@@ -373,7 +384,9 @@ function Get-SiolaPreparedBatch {
 
         if ($applicant.Value) {
             $currentRowNumbers = [Collections.Generic.HashSet[int]]::new()
-            foreach ($groupRow in $groupRows) { $null = $currentRowNumbers.Add([int]$groupRow.RowNumber) }
+            foreach ($applicantRow in $applicantRows) {
+                $null = $currentRowNumbers.Add([int]$applicantRow.RowNumber)
+            }
             foreach ($groupRow in $groupRows) {
                 $rmKey = Get-CanonicalText $groupRow.RmNumber
                 if (-not $rmKey) { continue }
@@ -398,9 +411,6 @@ function Get-SiolaPreparedBatch {
 
         $projects = @(Get-Projects -Rows $groupRows -Errors $errors)
         $calls = @($projects | ForEach-Object { $_.Call } | Select-Object -Unique)
-        if ($calls.Count -gt 1) {
-            $errors.Add("Žadatel má projekty v různých výzvách: $($calls -join ' | ').")
-        }
 
         $mayorState = [pscustomobject]@{ AlreadySent = $true; Error = '' }
         if ($mayorEmail.Value) {
@@ -417,8 +427,11 @@ function Get-SiolaPreparedBatch {
             $invalidGroups.Add([pscustomobject]@{
                 Applicant = $(if ($applicant.Value) { $applicant.Value } else { "(řádek $($groupRows[0].RowNumber))" })
                 MatchApplicant = [string]$groupRows[0].Applicant
-                RowNumbers = [int[]]@($groupRows.RowNumber)
-                ApprovalRowFingerprints = [string[]]@($groupRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
+                RowNumbers = [int[]]@($applicantRows.RowNumber)
+                PrimaryRowNumbers = [int[]]@($groupRows.RowNumber)
+                SuppressedRowNumbers = [int[]]@($suppressedRows.RowNumber)
+                SelectedCall = [string]$applicantRows[0].Call
+                ApprovalRowFingerprints = [string[]]@($applicantRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
                 Errors = [string[]]@($errors)
             })
             continue
@@ -444,8 +457,11 @@ function Get-SiolaPreparedBatch {
         $prepared = [pscustomobject]@{
             Applicant = $applicant.Value
             MatchApplicant = $applicant.Value
-            RowNumbers = [int[]]@($groupRows.RowNumber)
-            ApprovalRowFingerprints = [string[]]@($groupRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
+            RowNumbers = [int[]]@($applicantRows.RowNumber)
+            PrimaryRowNumbers = [int[]]@($groupRows.RowNumber)
+            SuppressedRowNumbers = [int[]]@($suppressedRows.RowNumber)
+            SelectedCall = [string]$applicantRows[0].Call
+            ApprovalRowFingerprints = [string[]]@($applicantRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
             Jobs = [object[]]@($jobs)
             MayorRequired = [bool]$mayorEmail.Value
             MayorAlreadySent = [bool]$mayorState.AlreadySent
@@ -476,6 +492,7 @@ function Get-SiolaBatchApprovalFingerprint {
         $group = $_
         [ordered]@{
             applicant = [string]$group.Applicant
+            selectedCall = [string]$group.SelectedCall
             rows = [string[]]@($group.ApprovalRowFingerprints | Sort-Object)
             jobs = [object[]]@($group.Jobs | Sort-Object Role | ForEach-Object {
                 [ordered]@{
@@ -490,6 +507,7 @@ function Get-SiolaBatchApprovalFingerprint {
     $completedRecords = @($Batch.CompletedGroups | ForEach-Object {
         [ordered]@{
             applicant = [string]$_.Applicant
+            selectedCall = [string]$_.SelectedCall
             rows = [string[]]@($_.ApprovalRowFingerprints | Sort-Object)
         }
     } | Sort-Object applicant)

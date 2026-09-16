@@ -62,6 +62,59 @@ $duplicateResult = Get-SiolaPreparedBatch -Rows @($base, $duplicate) -Mode VALID
 Assert-Siola ($duplicateResult.JobCount -eq 2) 'duplicitní Číslo RM se nesmí odeslat dvakrát'
 Assert-Siola ($duplicateResult.Groups[0].Jobs[0].BodyHtml.Contains('1.057.223,- Kč')) 'duplicitní dotace se nesmí sečíst dvakrát'
 
+$laterCall = New-FixtureRow -RowNumber 3
+$laterCall.Call = 'RES+4/2025'
+$laterCall.RmNumber = '67890'
+$laterCall.ProjectName = 'Jiný projekt v obci Příkladov'
+$laterCall.Grant = 2000000
+$laterCall.MayorEmail = 'new-mayor@example.com'
+$laterCall.MayorSalutation = 'Vážená paní starostko Nová,'
+$multiCallResult = Get-SiolaPreparedBatch -Rows @($laterCall, $base) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($multiCallResult.ValidationErrorCount -eq 0 -and $multiCallResult.JobCount -eq 2) `
+    'více výzev stejného žadatele nesmí být chyba'
+$multiCallGroup = $multiCallResult.Groups[0]
+Assert-Siola ((@($multiCallGroup.PrimaryRowNumbers) -join ',') -eq '2') `
+    'pro e-mail se musí vybrat výzva na nejnižším čísle řádku bez ohledu na pořadí vstupu'
+Assert-Siola ((@($multiCallGroup.SuppressedRowNumbers) -join ',') -eq '3') `
+    'řádky dalších výzev musí být označeny pro potlačení'
+Assert-Siola ((@($multiCallGroup.RowNumbers) -join ',') -eq '2,3') `
+    'schválení a rezervace musí zahrnout i řádky dalších výzev'
+Assert-Siola ((@($multiCallGroup.Jobs[0].RowNumbers) -join ',') -eq '2') `
+    'náhled e-mailu smí uvádět jen řádky vybrané výzvy'
+Assert-Siola ($multiCallGroup.Jobs[0].BodyHtml.Contains('Instalace FVE v obci Příkladov') -and
+    -not $multiCallGroup.Jobs[0].BodyHtml.Contains('Jiný projekt v obci Příkladov')) `
+    'e-mail nesmí obsahovat projekt z pozdější výzvy'
+
+$completedFirst = New-FixtureRow -RowNumber 2
+$completedFirst.MayorStatus = 'ODESLÁNO | previous-mayor'
+$completedFirst.SecretaryStatus = 'ODESLÁNO | previous-secretary'
+$completedLater = New-FixtureRow -RowNumber 3
+$completedLater.Call = 'RES+4/2025'
+$completedLater.RmNumber = '67890'
+$completedLater.ProjectName = 'Jiný projekt v obci Příkladov'
+$completedLater.MayorStatus = 'ODESLÁNO | previous-mayor'
+$completedLater.SecretaryStatus = 'ODESLÁNO | previous-secretary'
+$completedOrderA = Get-SiolaPreparedBatch -Rows @($completedFirst, $completedLater) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+$completedFirst.RowNumber = 4
+$completedLater.RowNumber = 2
+$completedOrderB = Get-SiolaPreparedBatch -Rows @($completedFirst, $completedLater) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($completedOrderA.JobCount -eq 0 -and $completedOrderB.JobCount -eq 0) `
+    'již odeslané skupiny nesmí vytvářet nové zprávy'
+Assert-Siola ((Get-SiolaBatchApprovalFingerprint $completedOrderA) -cne
+    (Get-SiolaBatchApprovalFingerprint $completedOrderB)) `
+    'schvalovací otisk musí svázat výběr první výzvy i u dokončené skupiny'
+
+$missingLaterCall = New-FixtureRow -RowNumber 3
+$missingLaterCall.Call = ''
+$missingLaterCall.RmNumber = '67890'
+$missingLaterResult = Get-SiolaPreparedBatch -Rows @($base, $missingLaterCall) -Mode VALIDATE `
+    -RunId selftest -BatchSize 50
+Assert-Siola ($missingLaterResult.ValidationErrorCount -eq 1) `
+    'chybějící výzva nesmí být skryta jako potlačený další projekt'
+
 $conflict = New-FixtureRow -RowNumber 3
 $conflict.Grant = 42
 $conflictResult = Get-SiolaPreparedBatch -Rows @($base, $conflict) -Mode VALIDATE -RunId selftest -BatchSize 50

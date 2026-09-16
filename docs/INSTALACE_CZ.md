@@ -85,6 +85,12 @@ Hodnoty `není` a `neni` v polích starosty nebo tajemníka znamenají, že dan�
 příjemce není k dispozici. Automat připraví e-mail jen druhému příjemci. Pokud
 chybějí oba, validace řádek odmítne.
 
+Pokud má jeden žadatel připravené řádky z více hodnot `Výzva`, automat vytvoří
+e-mail pouze pro výzvu na nejnižším čísle řádku. Projekty této výzvy může spojit
+do jednoho e-mailu. Ostatní výzvy do zprávy nevloží. Až po potvrzeném odeslání
+alespoň jednomu příjemci dostanou jejich řádky stav
+`KONTAKTOVÁNO JINÝM PROJEKTEM`. Pokud odeslání selže, tento stav se nezapíše.
+
 Sloupce `Datum e-mailu STAROSTA` a `Datum e-mailu TAJEMNÍK` jednou nastavte přes
 **Formát > Číslo > Datum a čas**. Automat zapisuje nativní číselnou hodnotu data;
 bez formátu by Google tabulka mohla zobrazit pouze pořadové číslo.
@@ -104,6 +110,9 @@ U každé zprávy zkontrolujte:
 - tajemník má `Oslovení - TAJEMNÍK`;
 - tajemník je samostatná zpráva, nikoli CC;
 - Calibri 12, tučné pasáže a celý podpis.
+
+Pokud má žadatel více výzev, náhled navíc vypíše řádky, které se neodešlou a po
+úspěšném kontaktu dostanou stav `KONTAKTOVÁNO JINÝM PROJEKTEM`.
 
 V automaticky otevřeném HTML náhledu navíc projděte nebo vyhledejte všechny obce,
 příjemce a oslovení. Úspěšný TEST vytvoří potvrzení platné 24 hodin.
