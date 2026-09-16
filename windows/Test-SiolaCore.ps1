@@ -82,8 +82,10 @@ Assert-Siola ((@($multiCallGroup.RowNumbers) -join ',') -eq '2,3') `
     'schválení a rezervace musí zahrnout i řádky dalších výzev'
 Assert-Siola ((@($multiCallGroup.Jobs[0].RowNumbers) -join ',') -eq '2') `
     'náhled e-mailu smí uvádět jen řádky vybrané výzvy'
-Assert-Siola ($multiCallGroup.Jobs[0].BodyHtml.Contains('Instalace FVE v obci Příkladov') -and
-    -not $multiCallGroup.Jobs[0].BodyHtml.Contains('Jiný projekt v obci Příkladov')) `
+$multiCallBody = [string]$multiCallGroup.Jobs[0].BodyHtml
+Assert-Siola ($multiCallBody.Contains('Instalace FVE v obci Příkladov')) `
+    'e-mail musí obsahovat projekt z první výzvy'
+Assert-Siola (-not $multiCallBody.Contains('Jiný projekt v obci Příkladov')) `
     'e-mail nesmí obsahovat projekt z pozdější výzvy'
 
 $completedFirst = New-FixtureRow -RowNumber 2
