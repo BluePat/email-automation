@@ -14,24 +14,63 @@ function Release-SiolaComReference {
     }
 }
 
-function Assert-SiolaMailSendingAccount {
+function Assert-SiolaMailSendingIdentity {
     param(
         [Parameter(Mandatory)]$Mail,
         [Parameter(Mandatory)][string]$ExpectedSmtpAddress,
         [string]$Purpose = 'odeslání zprávy'
     )
     $assignedAccount = $null
+    $senderEntry = $null
     try {
         $assignedAccount = $Mail.SendUsingAccount
-        $actualSmtpAddress = if ($null -eq $assignedAccount) {
+        $accountSmtpAddress = if ($null -eq $assignedAccount) {
             '<žádný účet>'
         }
         else { ([string]$assignedAccount.SmtpAddress).Trim() }
-        if ($actualSmtpAddress -ine $ExpectedSmtpAddress) {
-            throw "Outlook nepotvrdil odesílající účet pro $Purpose. Očekáváno: '$ExpectedSmtpAddress'; Outlook vrátil: '$actualSmtpAddress'."
+
+        $senderSmtpAddress = '<žádný odesílatel>'
+        try {
+            $senderEntry = $Mail.Sender
+            if ($null -ne $senderEntry) {
+                $resolvedSender = Get-SiolaAddressEntrySmtpAddress -AddressEntry $senderEntry
+                if ($resolvedSender) { $senderSmtpAddress = $resolvedSender }
+            }
+        }
+        catch {}
+
+        if ($accountSmtpAddress -ine $ExpectedSmtpAddress -and
+            $senderSmtpAddress -ine $ExpectedSmtpAddress) {
+            throw "Outlook nepotvrdil odesílací identitu pro $Purpose. Očekáváno: '$ExpectedSmtpAddress'; účet: '$accountSmtpAddress'; odesílatel: '$senderSmtpAddress'."
         }
     }
-    finally { Release-SiolaComReference $assignedAccount }
+    finally {
+        Release-SiolaComReference $senderEntry
+        Release-SiolaComReference $assignedAccount
+    }
+}
+
+function Set-SiolaMailSendingIdentity {
+    param([Parameter(Mandatory)]$Mail, [Parameter(Mandatory)]$OutlookContext)
+    $currentUser = $null
+    $senderEntry = $null
+    try {
+        $currentUser = $OutlookContext.Account.CurrentUser
+        if ($null -eq $currentUser) {
+            throw 'Outlook neposkytl uživatele zvoleného odesílajícího účtu.'
+        }
+        $senderEntry = $currentUser.AddressEntry
+        if ($null -eq $senderEntry) {
+            throw 'Outlook neposkytl adresu zvoleného odesílajícího účtu.'
+        }
+        # Microsoft documents Sender as the important MailItem-to-account binding.
+        $Mail.Sender = $senderEntry
+        $Mail.SendUsingAccount = $OutlookContext.Account
+    }
+    finally {
+        Release-SiolaComReference $senderEntry
+        Release-SiolaComReference $currentUser
+    }
 }
 
 function Connect-SiolaOutlook {
@@ -73,41 +112,52 @@ function Connect-SiolaOutlook {
     }
 }
 
-function Get-SiolaRecipientSmtpAddress {
-    param([Parameter(Mandatory)]$Recipient)
-    $entry = $null
+function Get-SiolaAddressEntrySmtpAddress {
+    param([Parameter(Mandatory)]$AddressEntry)
     $accessor = $null
     $exchangeUser = $null
     $exchangeList = $null
     try {
-        $entry = $Recipient.AddressEntry
         $smtp = ''
         try {
-            $accessor = $entry.PropertyAccessor
+            $accessor = $AddressEntry.PropertyAccessor
             $smtp = [string]$accessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x39FE001E')
         }
         catch {}
-        if (-not $smtp -and [string]$entry.Type -ieq 'EX') {
+        if (-not $smtp -and [string]$AddressEntry.Type -ieq 'EX') {
             try {
-                $exchangeUser = $entry.GetExchangeUser()
+                $exchangeUser = $AddressEntry.GetExchangeUser()
                 if ($null -ne $exchangeUser) { $smtp = [string]$exchangeUser.PrimarySmtpAddress }
             }
             catch {}
             if (-not $smtp) {
                 try {
-                    $exchangeList = $entry.GetExchangeDistributionList()
+                    $exchangeList = $AddressEntry.GetExchangeDistributionList()
                     if ($null -ne $exchangeList) { $smtp = [string]$exchangeList.PrimarySmtpAddress }
                 }
                 catch {}
             }
         }
-        if (-not $smtp -and [string]$entry.Type -ieq 'SMTP') { $smtp = [string]$entry.Address }
+        if (-not $smtp -and [string]$AddressEntry.Type -ieq 'SMTP') {
+            $smtp = [string]$AddressEntry.Address
+        }
         return $smtp.Trim()
     }
     finally {
         Release-SiolaComObject $exchangeList
         Release-SiolaComObject $exchangeUser
         Release-SiolaComObject $accessor
+    }
+}
+
+function Get-SiolaRecipientSmtpAddress {
+    param([Parameter(Mandatory)]$Recipient)
+    $entry = $null
+    try {
+        $entry = $Recipient.AddressEntry
+        return Get-SiolaAddressEntrySmtpAddress -AddressEntry $entry
+    }
+    finally {
         Release-SiolaComObject $entry
     }
 }
@@ -209,8 +259,8 @@ function Send-SiolaOutlookJob {
         $mail.HTMLBody = [string]$Job.BodyHtml
         # Microsoft documents this order: populate and resolve the message first,
         # then assign SendUsingAccount immediately before Send().
-        $mail.SendUsingAccount = $OutlookContext.Account
-        Assert-SiolaMailSendingAccount -Mail $mail `
+        Set-SiolaMailSendingIdentity -Mail $mail -OutlookContext $OutlookContext
+        Assert-SiolaMailSendingIdentity -Mail $mail `
             -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) `
             -Purpose 'finální kontrolu před odesláním'
         $mail.BillingInformation = [string]$Job.JobId

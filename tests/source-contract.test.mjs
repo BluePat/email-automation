@@ -152,13 +152,17 @@ test("non-send status writes receive the same freshness protection", () => {
 });
 
 test("Outlook verifies that SendUsingAccount stuck", () => {
-  assert.match(outlook, /function Assert-SiolaMailSendingAccount/);
+  assert.match(outlook, /function Assert-SiolaMailSendingIdentity/);
+  assert.match(outlook, /function Set-SiolaMailSendingIdentity/);
+  assert.match(outlook, /\$Mail\.Sender = \$senderEntry/);
+  assert.match(outlook, /\$Mail\.SendUsingAccount = \$OutlookContext\.Account/);
   assert.match(outlook, /\$assignedAccount = \$Mail\.SendUsingAccount/);
-  assert.match(outlook, /\$actualSmtpAddress -ine \$ExpectedSmtpAddress/);
-  assert.equal((outlook.match(/Assert-SiolaMailSendingAccount -Mail \$mail/g) ?? []).length, 1);
+  assert.match(outlook, /\$senderEntry = \$Mail\.Sender/);
+  assert.match(outlook, /\$accountSmtpAddress -ine \$ExpectedSmtpAddress -and[\s\S]*?\$senderSmtpAddress -ine \$ExpectedSmtpAddress/);
+  assert.equal((outlook.match(/Assert-SiolaMailSendingIdentity -Mail \$mail/g) ?? []).length, 1);
   const body = outlook.indexOf("$mail.HTMLBody = [string]$Job.BodyHtml");
-  const account = outlook.indexOf("$mail.SendUsingAccount = $OutlookContext.Account", body);
-  const verify = outlook.indexOf("Assert-SiolaMailSendingAccount -Mail $mail", account);
+  const account = outlook.indexOf("Set-SiolaMailSendingIdentity -Mail $mail", body);
+  const verify = outlook.indexOf("Assert-SiolaMailSendingIdentity -Mail $mail", account);
   const send = outlook.indexOf("$mail.Send()", verify);
   assert.ok(body >= 0 && account > body && verify > account && send > verify);
 });
