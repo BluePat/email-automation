@@ -429,7 +429,7 @@ function Get-SiolaPreparedBatch {
                 MatchApplicant = [string]$groupRows[0].Applicant
                 RowNumbers = [int[]]@($applicantRows.RowNumber)
                 PrimaryRowNumbers = [int[]]@($groupRows.RowNumber)
-                SuppressedRowNumbers = [int[]]@($suppressedRows.RowNumber)
+                SuppressedRowNumbers = [int[]]@($suppressedRows | ForEach-Object { [int]$_.RowNumber })
                 SelectedCall = [string]$applicantRows[0].Call
                 ApprovalRowFingerprints = [string[]]@($applicantRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
                 Errors = [string[]]@($errors)
@@ -459,7 +459,7 @@ function Get-SiolaPreparedBatch {
             MatchApplicant = $applicant.Value
             RowNumbers = [int[]]@($applicantRows.RowNumber)
             PrimaryRowNumbers = [int[]]@($groupRows.RowNumber)
-            SuppressedRowNumbers = [int[]]@($suppressedRows.RowNumber)
+            SuppressedRowNumbers = [int[]]@($suppressedRows | ForEach-Object { [int]$_.RowNumber })
             SelectedCall = [string]$applicantRows[0].Call
             ApprovalRowFingerprints = [string[]]@($applicantRows | ForEach-Object { Get-SiolaRowApprovalFingerprint $_ } | Sort-Object)
             Jobs = [object[]]@($jobs)
