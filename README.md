@@ -64,12 +64,11 @@ error; the code does not guess.
 - TEST validates and creates a reviewable HTML preview for every eligible applicant,
   sends only the first three applicants to the configured test inbox, and never
   changes the sheet.
-- The message body contains no manually configured signature fields. Classic
-  Outlook supplies the default signature for the exact sending account. TEST
-  captures it in the preview and test messages; LIVE stops if it later changes.
-  Configuration stores only an opaque approval fingerprint, never the signature
-  text or contact fields. A legacy manual `signature` object is removed atomically
-  on the next run.
+- The approved SIOLA signature is fixed directly in the HTML template, so TEST,
+  previews, and LIVE use exactly the same signature without relying on Outlook's
+  default-signature feature. No signature field or fingerprint is stored in
+  configuration. Legacy signature configuration is removed atomically on the
+  next run.
 - Outlook sending is never automatically retried.
 - A message is marked `ODESLÁNO` only after its hidden job identifier is found in
   Classic Outlook's Sent Items. Offline or stuck-Outbox messages fail closed.
@@ -97,8 +96,7 @@ does not guarantee acceptance by the recipient's remote mail server.
 ## Requirements
 
 - Windows 10 or 11 with PowerShell 7.
-- Classic Outlook installed with the sending account and a non-empty default
-  signature selected for that account's new messages.
+- Classic Outlook installed with the sending account.
 - The Windows user must remain signed in at the scheduled time.
 - A Google service account with the Google Sheets API enabled.
 - The source Google Sheet shared with that service account as Editor.

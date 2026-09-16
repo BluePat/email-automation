@@ -131,7 +131,6 @@ $config = [ordered]@{
     dataDirectory = $dataDirectory
     outlookSenderSmtpAddress = $sender
     testRecipient = $testRecipient
-    approvedOutlookSignatureFingerprint = ''
     batchSize = 50
     testBatchSize = 3
     delaySeconds = 3

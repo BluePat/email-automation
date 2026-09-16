@@ -155,7 +155,7 @@ test("Outlook verifies that SendUsingAccount stuck", () => {
   assert.match(outlook, /function Assert-SiolaMailSendingAccount/);
   assert.match(outlook, /\$assignedAccount = \$Mail\.SendUsingAccount/);
   assert.match(outlook, /assignedAccount\.SmtpAddress -ine/);
-  assert.ok((outlook.match(/Assert-SiolaMailSendingAccount -Mail \$mail/g) ?? []).length >= 4);
+  assert.ok((outlook.match(/Assert-SiolaMailSendingAccount -Mail \$mail/g) ?? []).length >= 2);
 });
 
 test("ambiguous US-formatted grant text fails closed", () => {
@@ -209,28 +209,31 @@ test("public examples contain no live spreadsheet or contact defaults", () => {
   assert.match(configExample.outlookSenderSmtpAddress, /@example\.com$/);
   assert.match(configExample.testRecipient, /@example\.com$/);
   assert.equal("signature" in configExample, false);
+  assert.equal("approvedOutlookSignatureFingerprint" in configExample, false);
   assert.doesNotMatch(installer, /výchozí: dodaná databáze/);
   assert.match(installer, /\$spreadsheetInput = Read-RequiredText 'Google Sheet URL nebo ID'/);
 });
 
-test("email signature comes from the selected Classic Outlook account", () => {
-  assert.doesNotMatch(core, /\$Signature\b/);
+test("email template contains the fixed approved signature", () => {
+  assert.match(core, /data-siola-signature="fixed-v1"/);
+  assert.match(core, /<strong>Jan Burian<\/strong>/);
+  assert.match(core, /href="tel:\+420608229916"/);
+  assert.match(core, /href="mailto:jan\.burian@siolagroup\.cz"/);
+  assert.match(core, /href="mailto:siola@siolagroup\.cz"/);
+  assert.match(core, /Informace obsažené v této zprávě mohou být důvěrného charakteru/);
+  assert.match(core, /This e-mail may contain privileged and confidential information\./);
+  assert.match(core, /Before you print it, think about the ENVIRONMENT\./);
+  assert.match(core, /color:#70ad47/);
+  assert.match(core, /ApprovalBodyHtml = \$approvalBodyHtml/);
+  assert.match(outlook, /\$mail\.HTMLBody = \[string\]\$Job\.BodyHtml/);
+  assert.doesNotMatch(outlook, /DefaultSignature|SignatureFingerprint|Wait-SiolaMailDefaultSignature|\.Display\(/);
+  assert.doesNotMatch(enableLive, /Connect-SiolaOutlook|outlookSignatureFingerprint|Ověřuji výchozí podpis/);
   assert.doesNotMatch(installer, /(?:Read-Host|Read-RequiredText)[^\n]*(?:podpis|signature)/i);
-  assert.doesNotMatch(core, /Informace obsažené v této zprávě|Before you print it|\$Signature\b/);
-  assert.match(runner, /PSObject\.Properties\.Remove\('signature'\)/);
+  assert.doesNotMatch(installer, /approvedOutlookSignatureFingerprint/);
+  assert.match(runner, /@\('signature', 'approvedOutlookSignatureFingerprint'\)/);
+  assert.match(runner, /PSObject\.Properties\.Remove\(\$legacyProperty\)/);
   assert.match(runner, /\[IO\.File\]::Replace\(\$migrationPath, \$configFullPath, \$null\)/);
-  assert.match(outlook, /Get-SiolaOutlookDefaultSignature/);
-  assert.match(outlook, /\$mail\.SendUsingAccount = \$OutlookContext\.Account[\s\S]*?Wait-SiolaMailDefaultSignature -Mail \$mail/);
-  assert.match(outlook, /\$Mail\.Display\(\$false\)/);
-  assert.match(outlook, /\$mail\.Close\(1\)/);
-  assert.match(outlook, /Merge-SiolaOutlookSignature -MessageHtml/);
-  const captureStart = outlook.indexOf("function Get-SiolaOutlookDefaultSignature");
-  const captureWait = outlook.indexOf("Wait-SiolaMailDefaultSignature -Mail $mail", captureStart);
-  const capturePostAccountCheck = outlook.indexOf("Assert-SiolaMailSendingAccount -Mail $mail", captureWait);
-  assert.ok(captureStart >= 0 && captureWait > captureStart && capturePostAccountCheck > captureWait);
-  assert.match(runner, /outlookSignatureFingerprint = \[string\]\$outlook\.SignatureFingerprint/);
-  assert.match(enableLive, /receipt\.outlookSignatureFingerprint -cne \[string\]\$outlook\.SignatureFingerprint/);
-  assert.match(runner, /config\.approvedOutlookSignatureFingerprint -cne \[string\]\$outlook\.SignatureFingerprint/);
+  assert.doesNotMatch(runner, /SignatureHtml|Merge-SiolaOutlookSignature|outlookSignatureFingerprint\s*=|config\.approvedOutlookSignatureFingerprint/);
 });
 
 test("bootstrap failures create an operator notification", () => {

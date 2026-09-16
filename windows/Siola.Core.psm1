@@ -279,6 +279,18 @@ $banner<p>$(ConvertTo-HtmlText $Salutation)</p>
 <p><strong>Stačí mi prosím krátká informace, zda tuto agendu již máte zajištěnou, nebo zda má smysl se o projektu krátce pobavit.</strong> Pokud ji má na starosti někdo jiný, budu Vám vděčný za přesměrování.</p>
 <p>Se zdvořilým pozdravem,</p>
 </div>
+<div data-siola-signature="fixed-v1" style="font-family:'Times New Roman',Times,serif;font-size:12pt;line-height:1.15;color:#000066;margin-top:16px">
+<p style="margin:0 0 14px 0"><strong>Jan Burian</strong></p>
+<p style="margin:0 0 18px 0">tel: <a href="tel:+420608229916" style="color:#000066;text-decoration:none">+420 608 229 916</a><br>
+e-mail: <a href="mailto:jan.burian@siolagroup.cz" style="color:#3f7f8f;text-decoration:underline">jan.burian@siolagroup.cz</a></p>
+<p style="margin:0 0 18px 0">SIOLA Consulting s.r.o.<br>
+Školská 3, Praha 1, 110 00<br>
+Email: <a href="mailto:siola@siolagroup.cz" style="color:#3f7f8f;text-decoration:underline">siola@siolagroup.cz</a><br>
+IČ: 23322977</p>
+<p style="margin:0;font-size:10pt;line-height:1.15">Informace obsažené v této zprávě mohou být důvěrného charakteru a mohou požívat zvláštní ochrany. Jsou určeny výhradně uvedeným adresátům. Pokud nejste adresátem, obratem nás, prosím, informujte (zasláním zprávy zpět odesílateli) a zprávu vymažte ze systému. Bez řádně vydaného souhlasu je zakázáno informace obsažené ve zprávě jakýmkoliv způsobem používat či je dále šířit.<br>
+This e-mail may contain privileged and confidential information. It is intended for the named recipients only. If you are not an intended recipient, please notify us immediately (by reply e-mail) and delete this e-mail from your system. Any use or retransmission without proper authorization is prohibited.</p>
+<p style="margin:16px 0 0 0;color:#70ad47">Before you print it, think about the ENVIRONMENT.</p>
+</div>
 "@
 }
 

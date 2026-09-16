@@ -12,13 +12,10 @@ návrat. Pokud přepínač není dostupný, vyhledejte v nabídce Start aplikaci
 zpráva se musí uložit do složky **Odeslaná pošta**; bez ukládání odeslaných kopií
 automat z bezpečnostních důvodů nepotvrdí odeslání.
 
-V **Soubor > Možnosti > Pošta > Podpisy** nastavte pro přesný odesílající účet
-výchozí podpis pro **Nové zprávy**. Automat podpisové údaje neukládá ani je
-neskládá sám. Při TESTU načte podpis z Classic Outlook, vloží jej do náhledu i
-testovacích zpráv a otevřený koncept hned zahodí. Při zpracování může krátce
-zobrazit okno nové zprávy; tím nechá Outlook vložit podpis včetně obrázků.
-V konfiguraci zůstává pouze nečitelný kontrolní otisk podpisu, nikoli jeho text
-nebo kontaktní údaje.
+Podpis je pevnou součástí šablony automatu. Výchozí podpis v Classic Outlooku
+nemusí být nastavený a automat jej nečte. Náhled, TEST i LIVE proto používají
+stejný podpis. Podpis se mění pouze instalací nové verze programu a taková změna
+vždy zneplatní předchozí TEST.
 
 Microsoft uvádí, že New Outlook nepodporuje Outlook Object Model ani COM. Tato
 automatizace proto s New Outlook nefunguje:
@@ -126,8 +123,8 @@ Pokud má žadatel více výzev, náhled navíc vypíše řádky, které se neod
 V automaticky otevřeném HTML náhledu navíc projděte nebo vyhledejte všechny obce,
 příjemce a oslovení. Úspěšný TEST vytvoří potvrzení platné 24 hodin.
 Potvrzení obsahuje otisk všech připravených zpráv a provozních souborů. Jakákoli
-změna připravených řádků, výchozího podpisu Outlooku nebo programu proto vyžaduje
-nový TEST a nové spuštění `ENABLE_LIVE.cmd`. Náhled se
+změna připravených řádků, vestavěného podpisu nebo programu proto vyžaduje nový
+TEST a nové spuštění `ENABLE_LIVE.cmd`. Náhled se
 po zapnutí LIVE odstraní; bez zapnutí se smaže při nejbližším dalším spuštění,
 jakmile je starší než dva dny.
 

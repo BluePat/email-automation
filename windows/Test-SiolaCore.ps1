@@ -214,35 +214,25 @@ $orphanMayorResult = Get-SiolaPreparedBatch -Rows @($orphanMayorSalutation) -Mod
 Assert-Siola ($orphanMayorResult.ValidationErrorCount -eq 1) `
     'skutečné oslovení starosty bez jeho e-mailu musí být chyba'
 
-$mergedHtml = Merge-SiolaOutlookSignature `
-    -MessageHtml '<div id="message">Text zprávy</div>' `
-    -SignatureDocumentHtml '<html><body><div id="signature">Výchozí podpis</div></body></html>'
-Assert-Siola ($mergedHtml -match '<body><div id="message">Text zprávy</div><div id="signature">') `
-    'text zprávy musí být vložen před výchozí podpis Outlooku'
-$signatureFingerprintA = Get-SiolaOutlookSignatureFingerprint `
-    '<html><body><p>Jan Vzorový</p><img src="cid:image001.png@run-a" alt="Logo"></body></html>'
-$signatureFingerprintB = Get-SiolaOutlookSignatureFingerprint `
-    '<html><body><p>Jan Vzorový</p><img src="cid:image001.png@run-b" alt="Logo"></body></html>'
-$changedSignatureFingerprint = Get-SiolaOutlookSignatureFingerprint `
-    '<html><body><p>Jana Vzorová</p><img src="cid:image001.png@run-c" alt="Logo"></body></html>'
-$formattedSignatureFingerprint = Get-SiolaOutlookSignatureFingerprint `
-    '<html><body><p style="color:red">Jan Vzorový</p><img src="cid:image001.png@run-d" alt="Logo"></body></html>'
-$changedLinkSignatureFingerprint = Get-SiolaOutlookSignatureFingerprint `
-    '<html><body><p><a href="mailto:other@example.com">Jan Vzorový</a></p><img src="cid:image001.png@run-e" alt="Logo"></body></html>'
-Assert-Siola ($signatureFingerprintA -ceq $signatureFingerprintB) `
-    'proměnlivé Outlook CID nesmí měnit otisk stejného podpisu'
-Assert-Siola ($signatureFingerprintA -cne $changedSignatureFingerprint) `
-    'změna textu podpisu musí změnit jeho otisk'
-Assert-Siola ($signatureFingerprintA -cne $formattedSignatureFingerprint) `
-    'změna formátování podpisu musí změnit jeho otisk'
-Assert-Siola ($signatureFingerprintA -cne $changedLinkSignatureFingerprint) `
-    'změna cíle odkazu v podpisu musí změnit jeho otisk'
-Assert-Siola (-not (Test-SiolaMeaningfulHtml `
-    '<html><head><style>body { color: black }</style></head><body>&nbsp;</body></html>')) `
-    'prázdná HTML kostra nesmí být přijata jako podpis'
-Assert-Siola (Test-SiolaMeaningfulHtml '<html><body><p>Jan Vzorový</p></body></html>') `
-    'textový podpis musí být rozpoznán'
-Assert-Siola (Test-SiolaMeaningfulHtml '<html><body><img src="logo.png"></body></html>') `
-    'obrázkový podpis musí být rozpoznán'
+$fixedSignatureBody = [string]$mayor.BodyHtml
+Assert-Siola ($fixedSignatureBody.Contains('data-siola-signature="fixed-v1"')) `
+    'každý e-mail musí obsahovat pevný podpis'
+Assert-Siola ($fixedSignatureBody.Contains('<strong>Jan Burian</strong>')) `
+    'pevný podpis musí obsahovat jméno'
+Assert-Siola ($fixedSignatureBody.Contains('href="tel:+420608229916"')) `
+    'telefon v pevném podpisu musí být klikací'
+Assert-Siola ($fixedSignatureBody.Contains('href="mailto:jan.burian@siolagroup.cz"')) `
+    'osobní e-mail v pevném podpisu musí být klikací'
+Assert-Siola ($fixedSignatureBody.Contains('href="mailto:siola@siolagroup.cz"')) `
+    'firemní e-mail v pevném podpisu musí být klikací'
+Assert-Siola ($fixedSignatureBody.Contains('Informace obsažené v této zprávě mohou být důvěrného charakteru')) `
+    'pevný podpis musí obsahovat české právní upozornění'
+Assert-Siola ($fixedSignatureBody.Contains('This e-mail may contain privileged and confidential information.')) `
+    'pevný podpis musí obsahovat anglické právní upozornění'
+Assert-Siola ($fixedSignatureBody.Contains('Before you print it, think about the ENVIRONMENT.')) `
+    'pevný podpis musí obsahovat ekologickou větu'
+Assert-Siola ($fixedSignatureBody.IndexOf('Se zdvořilým pozdravem,') -lt
+    $fixedSignatureBody.IndexOf('data-siola-signature="fixed-v1"')) `
+    'pevný podpis musí následovat až za textem zprávy'
 
 Write-Host 'SIOLA self-test: OK'

@@ -69,7 +69,7 @@ neměňte řádky `ZPRACOVÁVÁ SE` a postupujte podle částí **Bezpečné opa
 Pro opětovné zapnutí spusťte v instalační složce postupně `VALIDATE.cmd`,
 `TEST.cmd`, zkontrolujte testovací zprávy a úplný HTML náhled a nakonec spusťte
 `ENABLE_LIVE.cmd`. Nezapínejte úlohu přímo v Plánovači; tento postup znovu ověří
-obsah, program i výchozí podpis Classic Outlooku.
+obsah, program i pevný podpis vestavěný v e-mailové šabloně.
 
 ## Když počítač není v naplánovaný čas připravený
 

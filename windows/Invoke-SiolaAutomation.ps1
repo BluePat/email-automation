@@ -258,7 +258,6 @@ function Get-SiolaVerifiedSheetRows {
 function Write-SiolaPreviewReport {
     param(
         [Parameter(Mandatory)]$Batch,
-        [Parameter(Mandatory)]$OutlookContext,
         [Parameter(Mandatory)][string]$Path
     )
     $sections = [Collections.Generic.List[string]]::new()
@@ -274,9 +273,7 @@ function Write-SiolaPreviewReport {
                 "<br><strong>Jiné výzvy:</strong> řádky $suppressedRows nebudou odeslány a po potvrzeném kontaktu dostanou stav KONTAKTOVÁNO JINÝM PROJEKTEM."
             }
             else { '' }
-            $rendered = Merge-SiolaOutlookSignature -MessageHtml ([string]$job.BodyHtml) `
-                -SignatureDocumentHtml ([string]$OutlookContext.SignatureHtml)
-            $srcdoc = [Net.WebUtility]::HtmlEncode($rendered)
+            $srcdoc = [Net.WebUtility]::HtmlEncode([string]$job.BodyHtml)
             $sections.Add("<section><h2>$applicant – $role</h2><p><strong>Příjemce:</strong> $recipient<br><strong>Řádky e-mailu:</strong> $rows<br><strong>Předmět:</strong> $subject$suppressedNote</p><iframe class=`"email`" title=`"Náhled e-mailu`" srcdoc=`"$srcdoc`"></iframe></section>")
         }
     }
@@ -316,8 +313,14 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Konfigurace neexistuje: $ConfigPath. Nejdříve spusťte Install-SiolaAutomation.ps1."
 }
 $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($config.PSObject.Properties['signature']) {
-    $config.PSObject.Properties.Remove('signature')
+$legacyConfigChanged = $false
+foreach ($legacyProperty in @('signature', 'approvedOutlookSignatureFingerprint')) {
+    if ($config.PSObject.Properties[$legacyProperty]) {
+        $config.PSObject.Properties.Remove($legacyProperty)
+        $legacyConfigChanged = $true
+    }
+}
+if ($legacyConfigChanged) {
     $configFullPath = [IO.Path]::GetFullPath($ConfigPath)
     $configDirectory = [IO.Path]::GetDirectoryName($configFullPath)
     $migrationPath = Join-Path $configDirectory ".config-migration-$([guid]::NewGuid().ToString('N')).json"
@@ -498,7 +501,7 @@ try {
         $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
         New-Item -ItemType Directory -Path $previewDirectory -Force | Out-Null
         $previewPath = Join-Path $previewDirectory "preview-$($script:RunId).html"
-        Write-SiolaPreviewReport -Batch $batch -OutlookContext $outlook -Path $previewPath
+        Write-SiolaPreviewReport -Batch $batch -Path $previewPath
 
         $testGroups = @($batch.Groups | Select-Object -First ([int]$config.testBatchSize))
         [int]$sentJobs = 0
@@ -524,7 +527,6 @@ try {
             sentTestJobs = $sentJobs
             approvalDigest = Get-SiolaBatchApprovalFingerprint -Batch $batch
             runtimeFingerprint = Get-SiolaRuntimeFingerprint -RootPath $PSScriptRoot
-            outlookSignatureFingerprint = [string]$outlook.SignatureFingerprint
         }
         $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
         try { Start-Process -FilePath $previewPath | Out-Null } catch {}
@@ -600,11 +602,6 @@ try {
     }
 
     $outlook = Connect-SiolaOutlook -SenderSmtpAddress ([string]$config.outlookSenderSmtpAddress)
-    if (-not $config.PSObject.Properties['approvedOutlookSignatureFingerprint'] -or
-        -not ([string]$config.approvedOutlookSignatureFingerprint).Trim() -or
-        [string]$config.approvedOutlookSignatureFingerprint -cne [string]$outlook.SignatureFingerprint) {
-        throw 'Výchozí podpis v Classic Outlook chybí nebo se změnil od schválení. Spusťte TEST.cmd a ENABLE_LIVE.cmd znovu.'
-    }
     [int]$processedJobs = 0
     [bool]$deferredForDeadline = $false
     foreach ($group in $batch.Groups) {

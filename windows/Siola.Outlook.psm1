@@ -31,110 +31,6 @@ function Assert-SiolaMailSendingAccount {
     finally { Release-SiolaComReference $assignedAccount }
 }
 
-function Test-SiolaMeaningfulHtml {
-    param([AllowEmptyString()][string]$Html)
-    if ([string]::IsNullOrWhiteSpace($Html)) { return $false }
-    if ($Html -match '(?is)<(?:img|svg|v:shape)\b') { return $true }
-    $visible = [regex]::Replace($Html, '(?is)<(?:head|script|style)\b[^>]*>.*?</(?:head|script|style)>', '')
-    $visible = [regex]::Replace($visible, '(?s)<!--.*?-->', '')
-    $visible = [regex]::Replace($visible, '(?s)<[^>]+>', ' ')
-    $visible = [Net.WebUtility]::HtmlDecode($visible).Replace([char]0x00A0, ' ')
-    return -not [string]::IsNullOrWhiteSpace($visible)
-}
-
-function Get-SiolaOutlookSignatureFingerprint {
-    param([Parameter(Mandatory)][string]$Html)
-    $content = [regex]::Replace($Html, '(?is)<(?:head|script|style)\b[^>]*>.*?</(?:head|script|style)>', '')
-    $content = [regex]::Replace($content, '(?s)<!--.*?-->', '')
-    $imageDescriptors = [Collections.Generic.List[string]]::new()
-    foreach ($match in [regex]::Matches($content, '(?is)<img\b[^>]*>')) {
-        $tag = $match.Value
-        $srcMatch = [regex]::Match($tag, '(?is)\bsrc\s*=\s*(["''])(.*?)\1')
-        $altMatch = [regex]::Match($tag, '(?is)\balt\s*=\s*(["''])(.*?)\1')
-        $src = if ($srcMatch.Success) { [Net.WebUtility]::HtmlDecode($srcMatch.Groups[2].Value) } else { '' }
-        if ($src -match '(?i)^cid:([^@]+)') { $src = "cid:$($Matches[1])" }
-        elseif ($src -match '(?i)^file:') { $src = "file:$([IO.Path]::GetFileName(([uri]$src).LocalPath))" }
-        $alt = if ($altMatch.Success) { [Net.WebUtility]::HtmlDecode($altMatch.Groups[2].Value) } else { '' }
-        $imageDescriptors.Add("$src|$alt")
-    }
-    $visible = [regex]::Replace($content, '(?is)<(?:br|p|div|li)\b[^>]*>', "`n")
-    $visible = [regex]::Replace($visible, '(?s)<[^>]+>', ' ')
-    $visible = [Net.WebUtility]::HtmlDecode($visible).Replace([char]0x00A0, ' ')
-    $visible = ([regex]::Replace($visible, '\s+', ' ')).Trim()
-    $formatDescriptors = [Collections.Generic.List[string]]::new()
-    $formatTagPattern = '(?is)<(/?)(a|p|span|div|table|tbody|tr|td|strong|b|em|i|u|br|img)\b([^>]*)>'
-    foreach ($match in [regex]::Matches($content, $formatTagPattern)) {
-        $tagName = $match.Groups[2].Value.ToLowerInvariant()
-        if ($match.Groups[1].Value) {
-            $formatDescriptors.Add("/$tagName")
-            continue
-        }
-        $attributes = [Collections.Generic.List[string]]::new()
-        foreach ($attributeName in @('style', 'href', 'src', 'alt', 'color', 'face', 'size', 'align')) {
-            $attributePattern = '(?is)\b' + [regex]::Escape($attributeName) + '\s*=\s*(["''])(.*?)\1'
-            $attributeMatch = [regex]::Match($match.Groups[3].Value, $attributePattern)
-            if (-not $attributeMatch.Success) { continue }
-            $attributeValue = [Net.WebUtility]::HtmlDecode($attributeMatch.Groups[2].Value)
-            if ($attributeValue -match '(?i)^cid:([^@]+)') { $attributeValue = "cid:$($Matches[1])" }
-            $attributeValue = ([regex]::Replace($attributeValue, '\s+', ' ')).Trim()
-            $attributes.Add("$attributeName=$attributeValue")
-        }
-        $formatDescriptors.Add("$tagName|$($attributes -join '|')")
-    }
-    $canonical = "visible=$visible`nformat=$($formatDescriptors -join "`n")`n" +
-        "images=$($imageDescriptors.Count)`n$($imageDescriptors -join "`n")"
-    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical)))
-}
-
-function Wait-SiolaMailDefaultSignature {
-    param([Parameter(Mandatory)]$Mail, [Parameter(Mandatory)][string]$SenderSmtpAddress, [int]$TimeoutSeconds = 10)
-    $Mail.Display($false)
-    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-    do {
-        $signatureHtml = [string]$Mail.HTMLBody
-        if (Test-SiolaMeaningfulHtml $signatureHtml) { return $signatureHtml }
-        Start-Sleep -Milliseconds 250
-    } while ([DateTimeOffset]::UtcNow -lt $deadline)
-    throw "Pro účet $SenderSmtpAddress se nenačetl výchozí podpis. V Classic Outlook nastavte podpis pro Nové zprávy."
-}
-
-function Merge-SiolaOutlookSignature {
-    param(
-        [Parameter(Mandatory)][string]$MessageHtml,
-        [Parameter(Mandatory)][string]$SignatureDocumentHtml
-    )
-    $body = [regex]::Match($SignatureDocumentHtml, '(?is)<body\b[^>]*>')
-    if (-not $body.Success) { return "$MessageHtml$SignatureDocumentHtml" }
-    return $SignatureDocumentHtml.Substring(0, $body.Index + $body.Length) + $MessageHtml +
-        $SignatureDocumentHtml.Substring($body.Index + $body.Length)
-}
-
-function Get-SiolaOutlookDefaultSignature {
-    param([Parameter(Mandatory)]$OutlookContext, [int]$TimeoutSeconds = 10)
-    $mail = $null
-    try {
-        $mail = $OutlookContext.Application.CreateItem(0)
-        $mail.SendUsingAccount = $OutlookContext.Account
-        Assert-SiolaMailSendingAccount -Mail $mail `
-            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) -Purpose 'načtení podpisu'
-        $mail.BodyFormat = 2
-        $signatureHtml = Wait-SiolaMailDefaultSignature -Mail $mail `
-            -SenderSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) -TimeoutSeconds $TimeoutSeconds
-        Assert-SiolaMailSendingAccount -Mail $mail `
-            -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress) -Purpose 'načtení podpisu'
-        return [pscustomobject]@{
-            Html = $signatureHtml
-            Fingerprint = Get-SiolaOutlookSignatureFingerprint $signatureHtml
-        }
-    }
-    finally {
-        if ($null -ne $mail) {
-            try { $mail.Close(1) } catch {}
-        }
-        Release-SiolaComObject $mail
-    }
-}
-
 function Connect-SiolaOutlook {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$SenderSmtpAddress)
@@ -166,23 +62,11 @@ function Connect-SiolaOutlook {
         throw "V Classic Outlook nebyl nalezen odesílající účet $SenderSmtpAddress."
     }
 
-    $context = [pscustomobject]@{
+    return [pscustomobject]@{
         Application = $outlook
         Session = $session
         Account = $account
         SenderSmtpAddress = $SenderSmtpAddress.Trim()
-        SignatureHtml = ''
-        SignatureFingerprint = ''
-    }
-    try {
-        $signature = Get-SiolaOutlookDefaultSignature -OutlookContext $context
-        $context.SignatureHtml = [string]$signature.Html
-        $context.SignatureFingerprint = [string]$signature.Fingerprint
-        return $context
-    }
-    catch {
-        Disconnect-SiolaOutlook $context
-        throw
     }
 }
 
@@ -322,16 +206,9 @@ function Send-SiolaOutlookJob {
         }
         $mail.Subject = [string]$Job.Subject
         $mail.BodyFormat = 2
-        $signatureHtml = Wait-SiolaMailDefaultSignature -Mail $mail `
-            -SenderSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
+        $mail.HTMLBody = [string]$Job.BodyHtml
         Assert-SiolaMailSendingAccount -Mail $mail `
             -ExpectedSmtpAddress ([string]$OutlookContext.SenderSmtpAddress)
-        if ((Get-SiolaOutlookSignatureFingerprint $signatureHtml) -cne
-            [string]$OutlookContext.SignatureFingerprint) {
-            throw 'Výchozí podpis Outlooku se během běhu změnil. Zpráva nebyla odeslána.'
-        }
-        $mail.HTMLBody = Merge-SiolaOutlookSignature -MessageHtml ([string]$Job.BodyHtml) `
-            -SignatureDocumentHtml $signatureHtml
         $mail.BillingInformation = [string]$Job.JobId
         $mail.DeleteAfterSubmit = $false
         $mail.Send()
@@ -358,5 +235,4 @@ function Disconnect-SiolaOutlook {
     [GC]::WaitForPendingFinalizers()
 }
 
-Export-ModuleMember -Function Connect-SiolaOutlook, Get-SiolaOutlookSignatureFingerprint, `
-    Merge-SiolaOutlookSignature, Send-SiolaOutlookJob, Disconnect-SiolaOutlook, Test-SiolaMeaningfulHtml
+Export-ModuleMember -Function Connect-SiolaOutlook, Send-SiolaOutlookJob, Disconnect-SiolaOutlook

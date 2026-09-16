@@ -6,7 +6,6 @@
   "dataDirectory": "%LOCALAPPDATA%\\SIOLA Email Automation\\data",
   "outlookSenderSmtpAddress": "sender@example.com",
   "testRecipient": "test-recipient@example.com",
-  "approvedOutlookSignatureFingerprint": "",
   "batchSize": 50,
   "testBatchSize": 3,
   "delaySeconds": 3,
