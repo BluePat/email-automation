@@ -262,7 +262,8 @@ test("email template contains the fixed approved signature", () => {
   assert.doesNotMatch(installer, /approvedOutlookSignatureFingerprint/);
   assert.match(runner, /@\('signature', 'approvedOutlookSignatureFingerprint'\)/);
   assert.match(runner, /PSObject\.Properties\.Remove\(\$legacyProperty\)/);
-  assert.match(runner, /\[IO\.File\]::Replace\(\$migrationPath, \$configFullPath, \$null\)/);
+  assert.match(runner, /\[IO\.File\]::Replace\(\$migrationPath, \$configFullPath, \$migrationBackupPath\)/);
+  assert.doesNotMatch(runner, /\[IO\.File\]::Replace\([^\n]+\$null\)/);
   assert.doesNotMatch(runner, /SignatureHtml|Merge-SiolaOutlookSignature|outlookSignatureFingerprint\s*=|config\.approvedOutlookSignatureFingerprint/);
 });
 
@@ -365,7 +366,8 @@ test("prompt-free updater preserves settings and schedule while requiring a new 
   assert.ok(disable >= 0 && configRead > disable && lock > configRead && testStaged > lock && replace > testStaged);
   assert.match(updater, /State -ceq 'Running'/);
   assert.match(updater, /\$config\.mode = 'VALIDATE'/);
-  assert.match(updater, /\[IO\.File\]::Replace\(\$temporaryConfigPath, \$configPath, \$null\)/);
+  assert.match(updater, /\[IO\.File\]::Replace\(\$temporaryConfigPath, \$configPath, \$configBackupPath\)/);
+  assert.doesNotMatch(updater, /\[IO\.File\]::Replace\([^\n]+\$null\)/);
   assert.match(updater, /test-success\.json/);
   assert.match(updater, /siola-backup-/);
   assert.match(updater, /původní programové soubory byly obnoveny/);

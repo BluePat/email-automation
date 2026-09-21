@@ -324,11 +324,15 @@ if ($legacyConfigChanged) {
     $configFullPath = [IO.Path]::GetFullPath($ConfigPath)
     $configDirectory = [IO.Path]::GetDirectoryName($configFullPath)
     $migrationPath = Join-Path $configDirectory ".config-migration-$([guid]::NewGuid().ToString('N')).json"
+    $migrationBackupPath = Join-Path $configDirectory ".config-migration-backup-$([guid]::NewGuid().ToString('N')).json"
     try {
         $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $migrationPath -Encoding UTF8
-        [IO.File]::Replace($migrationPath, $configFullPath, $null)
+        [IO.File]::Replace($migrationPath, $configFullPath, $migrationBackupPath)
     }
-    finally { Remove-Item -LiteralPath $migrationPath -Force -ErrorAction SilentlyContinue }
+    finally {
+        Remove-Item -LiteralPath $migrationPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $migrationBackupPath -Force -ErrorAction SilentlyContinue
+    }
 }
 $effectiveMode = $(if ($Mode) { $Mode.ToUpperInvariant() } else { ([string]$config.mode).ToUpperInvariant() })
 if ($effectiveMode -notin @('VALIDATE', 'TEST', 'LIVE')) { throw 'Mode musí být VALIDATE, TEST nebo LIVE.' }

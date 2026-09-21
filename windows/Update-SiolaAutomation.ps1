@@ -96,6 +96,7 @@ $updateLockStream = $null
 $stagingDirectory = $null
 $backupDirectory = $null
 $temporaryConfigPath = $null
+$configBackupPath = $null
 $automationLock = Join-Path $dataDirectory 'automation.lock'
 try {
     try {
@@ -110,9 +111,11 @@ try {
     if ($config.PSObject.Properties['mode']) { $config.mode = 'VALIDATE' }
     else { $config | Add-Member -NotePropertyName mode -NotePropertyValue 'VALIDATE' }
     $temporaryConfigPath = Join-Path $InstallDirectory ".config-update-$([guid]::NewGuid().ToString('N')).tmp"
+    $configBackupPath = Join-Path $InstallDirectory ".config-update-backup-$([guid]::NewGuid().ToString('N')).json"
     $config | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $temporaryConfigPath -Encoding UTF8
-    [IO.File]::Replace($temporaryConfigPath, $configPath, $null)
+    [IO.File]::Replace($temporaryConfigPath, $configPath, $configBackupPath)
     $temporaryConfigPath = $null
+    Remove-Item -LiteralPath $configBackupPath -Force -ErrorAction SilentlyContinue
 
     # Starting a real update invalidates any previous code-bound approval, even if replacement later fails.
     Remove-Item -LiteralPath (Join-Path $dataDirectory 'test-success.json') -Force -ErrorAction SilentlyContinue
@@ -185,6 +188,9 @@ try {
 finally {
     if ($temporaryConfigPath -and (Test-Path -LiteralPath $temporaryConfigPath -PathType Leaf)) {
         Remove-Item -LiteralPath $temporaryConfigPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($configBackupPath -and (Test-Path -LiteralPath $configBackupPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $configBackupPath -Force -ErrorAction SilentlyContinue
     }
     if ($stagingDirectory -and (Test-Path -LiteralPath $stagingDirectory -PathType Container)) {
         Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
