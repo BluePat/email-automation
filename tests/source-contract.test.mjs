@@ -7,6 +7,8 @@ const outlook = await readFile(new URL("../windows/Siola.Outlook.psm1", import.m
 const runner = await readFile(new URL("../windows/Invoke-SiolaAutomation.ps1", import.meta.url), "utf8");
 const installer = await readFile(new URL("../windows/Install-SiolaAutomation.ps1", import.meta.url), "utf8");
 const installCmd = await readFile(new URL("../windows/INSTALL.cmd", import.meta.url), "utf8");
+const updater = await readFile(new URL("../windows/Update-SiolaAutomation.ps1", import.meta.url), "utf8");
+const updateCmd = await readFile(new URL("../windows/UPDATE.cmd", import.meta.url), "utf8");
 const google = await readFile(new URL("../windows/Siola.GoogleSheets.psm1", import.meta.url), "utf8");
 const enableLive = await readFile(new URL("../windows/Enable-SiolaLive.ps1", import.meta.url), "utf8");
 const outlookDiagnostic = await readFile(new URL("../windows/Test-SiolaOutlookDiagnostic.ps1", import.meta.url), "utf8");
@@ -345,6 +347,29 @@ test("forced reinstall disables the task and acquires the runtime lock before co
   assert.ok(disable >= 0 && lock > disable && stage > lock);
   assert.match(installer, /State -ceq 'Running'/);
   assert.match(installer, /Move-Item -LiteralPath \(Join-Path \$stagingDirectory/);
+});
+
+test("prompt-free updater preserves settings and schedule while requiring a new approval", () => {
+  assert.doesNotMatch(updater, /Read-Host/);
+  assert.match(updateCmd, /Update-SiolaAutomation\.ps1/);
+  assert.match(installer, /'Update-SiolaAutomation\.ps1'/);
+  assert.match(installer, /'UPDATE\.cmd'/);
+  assert.match(updater, /Get-Content -LiteralPath \$configPath[\s\S]*?ConvertFrom-Json/);
+  assert.match(updater, /machineBinding -cne \$currentBinding/);
+  assert.match(updater, /credentialCheck\.type -ne 'service_account'/);
+  const disable = updater.indexOf("Disable-ScheduledTask");
+  const configRead = updater.indexOf("Get-Content -LiteralPath $configPath");
+  const lock = updater.indexOf("[IO.File]::Open($automationLock", disable);
+  const testStaged = updater.indexOf("& (Join-Path $stagingDirectory 'Test-SiolaCore.ps1')", lock);
+  const replace = updater.indexOf("Move-Item -LiteralPath (Join-Path $stagingDirectory", testStaged);
+  assert.ok(disable >= 0 && configRead > disable && lock > configRead && testStaged > lock && replace > testStaged);
+  assert.match(updater, /State -ceq 'Running'/);
+  assert.match(updater, /\$config\.mode = 'VALIDATE'/);
+  assert.match(updater, /\[IO\.File\]::Replace\(\$temporaryConfigPath, \$configPath, \$null\)/);
+  assert.match(updater, /test-success\.json/);
+  assert.match(updater, /siola-backup-/);
+  assert.match(updater, /původní programové soubory byly obnoveny/);
+  assert.doesNotMatch(updater, /Register-ScheduledTask|New-ScheduledTaskTrigger|Enable-ScheduledTask/);
 });
 
 test("send-group row targets are cleaned in finally without masking final status success", () => {

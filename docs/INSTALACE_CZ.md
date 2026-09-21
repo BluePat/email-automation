@@ -65,6 +65,31 @@ zobrazit žádost o oprávnění správce; tu je nutné potvrdit.
 Outlook nemusí zůstat otevřený; musí však být správně nakonfigurovaný pod stejným
 uživatelem.
 
+## Aktualizace bez nového vyplňování
+
+Pokud už je automat na stejném počítači a pod stejným uživatelem nainstalovaný,
+nepoužívejte pro novou verzi znovu `INSTALL.cmd`:
+
+1. Stáhněte a rozbalte celou novou verzi projektu.
+2. V její složce `windows` dvakrát klikněte na `UPDATE.cmd`. Nespouštějte starou
+   kopii `UPDATE.cmd` z instalační složky.
+3. Skript načte existující konfiguraci z
+   `%LOCALAPPDATA%\SIOLA Email Automation`. Neptá se znovu na Google klíč, ID
+   tabulky, účet Outlooku, testovací adresu ani denní čas.
+4. Aktualizace zachová konfigurační hodnoty, uložený Google klíč, identifikátor
+   instalace a původní nastavení i čas naplánované úlohy. Tabulku nečte ani
+   nemění a žádný e-mail neodesílá.
+5. Po aktualizaci zůstane úloha vypnutá, režim se nastaví na `VALIDATE` a staré
+   potvrzení TEST i náhledy se odstraní. Spusťte postupně `VALIDATE.cmd`,
+   `TEST.cmd`, zkontrolujte náhled a zprávy a teprve potom `ENABLE_LIVE.cmd`.
+
+Aktualizace nejprve vypne existující naplánovanou úlohu. Potom se bezpečně
+odmítne, pokud tato úloha ještě běží, chybí některý
+soubor nové verze, konfigurace nebo klíč nejsou platné, případně konfigurace
+patří jinému počítači či uživateli. Pokud úloha existuje, po úspěchu i chybě
+zůstane vypnutá. Chybějící instalace nebo naplánovaná úloha vyžaduje úplný
+postup přes `INSTALL.cmd`.
+
 ## 5. Povinná kontrola VALIDATE
 
 V instalační složce dvakrát klikněte na `VALIDATE.cmd`. Režim pouze čte tabulku.

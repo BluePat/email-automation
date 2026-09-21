@@ -12,6 +12,9 @@ real connection is made during installation on the colleague's Windows computer.
 The deployable implementation is in `windows/`:
 
 - `INSTALL.cmd` starts the guarded installer.
+- `UPDATE.cmd` replaces runtime files without asking for configuration again. It
+  preserves the installed settings, credentials, and task schedule, but disables
+  LIVE until a fresh VALIDATE, TEST, and approval are completed.
 - `Invoke-SiolaAutomation.ps1` runs VALIDATE, TEST, or LIVE.
 - `Siola.Core.psm1` validates, groups, deduplicates, and renders Czech HTML.
 - `Siola.GoogleSheets.psm1` reads and updates exact Google Sheet cells.

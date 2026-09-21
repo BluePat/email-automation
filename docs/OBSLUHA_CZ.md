@@ -48,6 +48,14 @@ Chyby validace vracejí Plánovači úloh nenulový výsledek, i když se platn�
 předtím bezpečně zpracovaly. Zbývající zprávy mohou být odloženy před dosažením
 pětihodinového limitu běhu; zůstanou `K ODESLÁNÍ` pro další den.
 
+## Instalace nové verze programu
+
+Novou verzi na stejném počítači instalujte pomocí `windows\UPDATE.cmd` z nově
+stažené a rozbalené kopie projektu. Skript znovu nevyžaduje provozní údaje a
+nemění uložený Google klíč ani čas úlohy. Z bezpečnostních důvodů úlohu vypne,
+nastaví režim `VALIDATE` a zneplatní předchozí TEST. Po dokončení je proto vždy
+nutné provést `VALIDATE.cmd`, `TEST.cmd`, ruční kontrolu a `ENABLE_LIVE.cmd`.
+
 ## Dočasné vypnutí automatu
 
 Automat lze pozastavit bez odinstalace a bez změny tabulky:
