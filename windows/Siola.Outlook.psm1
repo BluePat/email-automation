@@ -63,9 +63,19 @@ function Set-SiolaMailSendingIdentity {
         if ($null -eq $senderEntry) {
             throw 'Outlook neposkytl adresu zvoleného odesílajícího účtu.'
         }
-        # Microsoft documents Sender as the important MailItem-to-account binding.
+        # Sender is useful additional binding evidence, but some Outlook COM profiles
+        # do not materialize it on a new unsent MailItem.
         $Mail.Sender = $senderEntry
-        $Mail.SendUsingAccount = $OutlookContext.Account
+        # PowerShell's ordinary COM property assignment can silently leave this null.
+        # InvokeMember performs the object-valued PROPERTYPUT used by Outlook and is
+        # read back by Assert-SiolaMailSendingIdentity before Send() is permitted.
+        try {
+            $Mail.GetType().InvokeMember('SendUsingAccount', [Reflection.BindingFlags]::SetProperty,
+                $null, $Mail, @($OutlookContext.Account)) | Out-Null
+        }
+        catch {
+            throw "Outlooku se nepodařilo nastavit odesílající účet: $($_.Exception.Message)"
+        }
     }
     finally {
         Release-SiolaComReference $senderEntry

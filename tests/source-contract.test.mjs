@@ -159,7 +159,8 @@ test("Outlook binds and verifies both documented sending identity properties", (
   assert.match(outlook, /function Assert-SiolaMailSendingIdentity/);
   assert.match(outlook, /function Set-SiolaMailSendingIdentity/);
   assert.match(outlook, /\$Mail\.Sender = \$senderEntry/);
-  assert.match(outlook, /\$Mail\.SendUsingAccount = \$OutlookContext\.Account/);
+  assert.match(outlook, /InvokeMember\('SendUsingAccount', \[Reflection\.BindingFlags\]::SetProperty,[\s\S]*?@\(\$OutlookContext\.Account\)\)/);
+  assert.doesNotMatch(outlook, /\$Mail\.SendUsingAccount\s*=/);
   assert.match(outlook, /\$assignedAccount = \$Mail\.SendUsingAccount/);
   assert.match(outlook, /\$senderEntry = \$Mail\.Sender/);
   assert.match(outlook, /\$accountSmtpAddress -ine \$ExpectedSmtpAddress -and[\s\S]*?\$senderSmtpAddress -ine \$ExpectedSmtpAddress/);
