@@ -229,9 +229,9 @@ function Get-SiolaRowTargets {
         })
     }
     $response = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
-    $matches = if ($null -ne $response -and $response.PSObject.Properties['matchedDeveloperMetadata']) {
-        @($response.matchedDeveloperMetadata)
-    } else { @() }
+    $matches = @(if ($null -ne $response -and $response.PSObject.Properties['matchedDeveloperMetadata']) {
+        $response.matchedDeveloperMetadata
+    })
     $targets = @($matches | ForEach-Object {
         $metadata = $_.developerMetadata
         $value = [string]$metadata.metadataValue
@@ -342,10 +342,11 @@ function Get-SiolaAutomationOwner {
     }
     $response = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
     if ($null -eq $response) { return '' }
-    $metadataMatches = if ($null -ne $response.PSObject.Properties['matchedDeveloperMetadata']) {
-        @($response.matchedDeveloperMetadata)
-    }
-    else { @() }
+    # The outer array expression is required: assignment from an if statement
+    # otherwise unwraps zero results to $null and one result to a scalar.
+    $metadataMatches = @(if ($null -ne $response.PSObject.Properties['matchedDeveloperMetadata']) {
+        $response.matchedDeveloperMetadata
+    })
     if ($metadataMatches.Count -eq 0) { return '' }
     $owners = @($metadataMatches | ForEach-Object { [string]$_.developerMetadata.metadataValue } |
         Where-Object { $_ } | Select-Object -Unique)
@@ -420,10 +421,9 @@ function Get-SiolaAutomationLeases {
         })
     }
     $response = Invoke-GoogleSheetsRequest -Method Post -Uri $uri -AccessToken $AccessToken -Body $body
-    $matches = if ($null -ne $response -and $response.PSObject.Properties['matchedDeveloperMetadata']) {
-        @($response.matchedDeveloperMetadata)
-    }
-    else { @() }
+    $matches = @(if ($null -ne $response -and $response.PSObject.Properties['matchedDeveloperMetadata']) {
+        $response.matchedDeveloperMetadata
+    })
     return @($matches | ForEach-Object {
         $metadata = $_.developerMetadata
         $parts = ([string]$metadata.metadataValue).Split('|')

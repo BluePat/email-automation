@@ -14,6 +14,24 @@ function global:Invoke-RestMethod {
     $parsedBody = if ($Body) { $Body | ConvertFrom-Json } else { $null }
     $global:SiolaMockCalls.Add([pscustomobject]@{ Method = $Method; Uri = $Uri; Body = $parsedBody })
     if ($Uri -like '*developerMetadata:search*') {
+        if ($global:SiolaMockMode -eq 'one-owner') {
+            return [pscustomobject]@{ matchedDeveloperMetadata = @([pscustomobject]@{
+                developerMetadata = [pscustomobject]@{
+                    metadataId = 31
+                    metadataValue = 'installation-one'
+                }
+            }) }
+        }
+        if ($global:SiolaMockMode -eq 'duplicate-owner') {
+            return [pscustomobject]@{ matchedDeveloperMetadata = @(
+                [pscustomobject]@{ developerMetadata = [pscustomobject]@{
+                    metadataId = 31; metadataValue = 'installation-one'
+                } },
+                [pscustomobject]@{ developerMetadata = [pscustomobject]@{
+                    metadataId = 32; metadataValue = 'installation-two'
+                } }
+            ) }
+        }
         if ($global:SiolaMockMode -eq 'late-lease') {
             return [pscustomobject]@{ matchedDeveloperMetadata = @([pscustomobject]@{
                 developerMetadata = [pscustomobject]@{
@@ -36,6 +54,22 @@ function global:Invoke-RestMethod {
 
 try {
     Import-Module (Join-Path $PSScriptRoot 'Siola.GoogleSheets.psm1') -Force
+
+    $global:SiolaMockMode = 'normal'
+    $owner = Get-SiolaAutomationOwner -SpreadsheetId example -AccessToken token
+    Assert-SiolaGoogleTest ($owner -ceq '') 'nulový počet zámků vlastníka se musí vrátit jako prázdná hodnota'
+
+    $global:SiolaMockMode = 'one-owner'
+    $owner = Get-SiolaAutomationOwner -SpreadsheetId example -AccessToken token
+    Assert-SiolaGoogleTest ($owner -ceq 'installation-one') 'jeden zámek vlastníka se musí načíst jako skalární ID'
+
+    $global:SiolaMockMode = 'duplicate-owner'
+    $duplicateOwnerFailed = $false
+    try { $null = Get-SiolaAutomationOwner -SpreadsheetId example -AccessToken token }
+    catch { $duplicateOwnerFailed = $true }
+    Assert-SiolaGoogleTest $duplicateOwnerFailed 'více zámků vlastníka musí bezpečně zastavit LIVE'
+
+    $global:SiolaMockMode = 'normal'
 
     $targets = @(New-SiolaRowTargets -SpreadsheetId example -SheetId 7 -AccessToken token `
         -RowNumbers @(9) -TargetPrefix test)

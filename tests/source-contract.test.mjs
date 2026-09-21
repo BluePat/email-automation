@@ -86,6 +86,7 @@ test("RM-related columns do not drive validation, grouping, or approval", () => 
 
 test("the Google Sheet is bound to one installation", () => {
   assert.match(google, /siola_automation_owner/);
+  assert.match(google, /\$metadataMatches = @\(if \(/);
   assert.match(enableLive, /Register-SiolaAutomationOwner/);
   assert.match(runner, /Assert-SiolaAutomationOwner/);
   assert.match(runner, /machineBinding/);
