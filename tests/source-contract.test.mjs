@@ -79,6 +79,11 @@ test("LIVE verifies every email-driving row using a complete fingerprint", () =>
   assert.match(runner, /Resolve-SiolaClaimedGroup/);
 });
 
+test("single-row claimed groups retain an array before Count validation", () => {
+  assert.match(runner, /\$expected = @\(Get-SiolaExpectedClaimFingerprints -Group \$Group/);
+  assert.match(runner, /STOPPED @\{ detail = \$failureDetail; location = \$failureLocation \}/);
+});
+
 test("RM-related columns do not drive validation, grouping, or approval", () => {
   assert.doesNotMatch(core, /RmNumber|Číslo RM/);
   assert.doesNotMatch(runner, /RmNumber|Číslo RM/);

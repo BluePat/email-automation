@@ -230,7 +230,9 @@ function Resolve-SiolaClaimedGroup {
         throw "Po rezervaci přibyly připravené řádky pro '$($Group.Applicant)'. Před pokračováním je nutná nová kontrola."
     }
     $claimed = @($FreshRows | Where-Object { ([string]$_.Status) -ceq $expectedStatus })
-    $expected = Get-SiolaExpectedClaimFingerprints -Group $Group -ClaimSourceRows $ClaimSourceRows -RunId $RunId
+    # PowerShell unwraps a single function result unless the caller captures it explicitly.
+    $expected = @(Get-SiolaExpectedClaimFingerprints -Group $Group `
+        -ClaimSourceRows $ClaimSourceRows -RunId $RunId)
     $expectedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($fingerprint in $expected) { $null = $expectedSet.Add($fingerprint) }
     $matching = @($claimed | Where-Object { $expectedSet.Contains((Get-SiolaRowApprovalFingerprint $_)) })
@@ -802,7 +804,8 @@ try {
 }
 catch {
     $failureDetail = Get-ShortFailure $_.Exception.Message
-    try { Write-SiolaLog CRITICAL STOPPED @{ detail = $failureDetail } } catch {}
+    $failureLocation = Get-ShortFailure $_.ScriptStackTrace
+    try { Write-SiolaLog CRITICAL STOPPED @{ detail = $failureDetail; location = $failureLocation } } catch {}
     Show-SiolaFailureNotification $failureDetail
     throw
 }
