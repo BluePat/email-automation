@@ -7,12 +7,30 @@ function Assert-SiolaGoogleTest {
 }
 
 $global:SiolaMockCalls = [Collections.Generic.List[object]]::new()
+$global:SiolaMockSleeps = [Collections.Generic.List[int]]::new()
 $global:SiolaMockMode = 'normal'
 $global:SiolaMockLeaseExpiry = 0L
+$global:SiolaMockOAuthAttempts = 0
 function global:Invoke-RestMethod {
     param($Method, $Uri, $Headers, $ErrorAction, $TimeoutSec, $ContentType, $Body)
-    $parsedBody = if ($Body) { $Body | ConvertFrom-Json } else { $null }
+    $parsedBody = if ($Body -is [string]) { $Body | ConvertFrom-Json } else { $Body }
     $global:SiolaMockCalls.Add([pscustomobject]@{ Method = $Method; Uri = $Uri; Body = $parsedBody })
+    if ($Uri -like '*oauth2.googleapis.com/token*') {
+        $global:SiolaMockOAuthAttempts++
+        if ($global:SiolaMockMode -eq 'oauth-transient-once' -and $global:SiolaMockOAuthAttempts -eq 1) {
+            throw [Net.Http.HttpRequestException]::new('simulated DNS failure')
+        }
+        if ($global:SiolaMockMode -eq 'oauth-transient-always') {
+            throw [Net.Http.HttpRequestException]::new('simulated timeout')
+        }
+        if ($global:SiolaMockMode -eq 'oauth-auth-error') {
+            $response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::BadRequest)
+            throw [Microsoft.PowerShell.Commands.HttpResponseException]::new(
+                'simulated invalid grant', $response
+            )
+        }
+        return [pscustomobject]@{ access_token = 'mock-token'; expires_in = 3600 }
+    }
     if ($Uri -like '*developerMetadata:search*') {
         if ($global:SiolaMockMode -eq 'one-owner') {
             return [pscustomobject]@{ matchedDeveloperMetadata = @([pscustomobject]@{
@@ -51,9 +69,41 @@ function global:Invoke-RestMethod {
     if ($Uri -like '*batchUpdateByDataFilter*') { return [pscustomobject]@{ totalUpdatedRows = 1 } }
     return [pscustomobject]@{}
 }
+function global:Start-Sleep {
+    param([int]$Seconds)
+    $global:SiolaMockSleeps.Add($Seconds)
+}
 
 try {
     Import-Module (Join-Path $PSScriptRoot 'Siola.GoogleSheets.psm1') -Force
+    $googleModule = Get-Module Siola.GoogleSheets
+
+    Set-SiolaGoogleRequestDeadline -DeadlineUtc ([DateTimeOffset]::UtcNow.AddMinutes(10))
+    $global:SiolaMockMode = 'oauth-transient-once'
+    $global:SiolaMockOAuthAttempts = 0
+    $global:SiolaMockSleeps.Clear()
+    $tokenResponse = & $googleModule { Invoke-GoogleOAuthTokenRequest -Assertion 'test-assertion' }
+    Assert-SiolaGoogleTest ($tokenResponse.access_token -ceq 'mock-token' -and
+        $global:SiolaMockOAuthAttempts -eq 2 -and $global:SiolaMockSleeps.Count -eq 1) `
+        'přechodná síťová chyba OAuth se musí omezeně zopakovat a poté uspět'
+
+    $global:SiolaMockMode = 'oauth-auth-error'
+    $global:SiolaMockOAuthAttempts = 0
+    $global:SiolaMockSleeps.Clear()
+    $authFailed = $false
+    try { $null = & $googleModule { Invoke-GoogleOAuthTokenRequest -Assertion 'test-assertion' } }
+    catch { $authFailed = $true }
+    Assert-SiolaGoogleTest ($authFailed -and $global:SiolaMockOAuthAttempts -eq 1 -and
+        $global:SiolaMockSleeps.Count -eq 0) 'OAuth 400 se nesmí opakovat'
+
+    $global:SiolaMockMode = 'oauth-transient-always'
+    $global:SiolaMockOAuthAttempts = 0
+    $global:SiolaMockSleeps.Clear()
+    $transientFailed = $false
+    try { $null = & $googleModule { Invoke-GoogleOAuthTokenRequest -Assertion 'test-assertion' } }
+    catch { $transientFailed = $true }
+    Assert-SiolaGoogleTest ($transientFailed -and $global:SiolaMockOAuthAttempts -eq 4 -and
+        $global:SiolaMockSleeps.Count -eq 3) 'trvalá síťová chyba OAuth musí skončit po čtyřech pokusech'
 
     $global:SiolaMockMode = 'normal'
     $owner = Get-SiolaAutomationOwner -SpreadsheetId example -AccessToken token
@@ -131,5 +181,7 @@ try {
 }
 finally {
     Remove-Item Function:\global:Invoke-RestMethod -ErrorAction SilentlyContinue
-    Remove-Variable SiolaMockCalls, SiolaMockMode, SiolaMockLeaseExpiry -Scope Global -ErrorAction SilentlyContinue
+    Remove-Item Function:\global:Start-Sleep -ErrorAction SilentlyContinue
+    Remove-Variable SiolaMockCalls, SiolaMockSleeps, SiolaMockMode, SiolaMockLeaseExpiry, `
+        SiolaMockOAuthAttempts -Scope Global -ErrorAction SilentlyContinue
 }

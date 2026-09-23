@@ -14,6 +14,75 @@ function Set-SiolaGoogleRequestMaxAttempts {
     $script:RequestMaxAttempts = $MaxAttempts
 }
 
+function Get-SiolaHttpStatusCode {
+    param([Parameter(Mandatory)][Exception]$Exception)
+    $candidate = $Exception
+    while ($null -ne $candidate) {
+        if ($candidate.PSObject.Properties['Response'] -and $null -ne $candidate.Response) {
+            return [int]$candidate.Response.StatusCode
+        }
+        if ($candidate.PSObject.Properties['StatusCode'] -and $null -ne $candidate.StatusCode) {
+            return [int]$candidate.StatusCode
+        }
+        $candidate = $candidate.InnerException
+    }
+    return $null
+}
+
+function Get-SiolaRetryDelaySeconds {
+    param(
+        [AllowNull()]$StatusCode,
+        [Parameter(Mandatory)][int]$Attempt,
+        [Parameter(Mandatory)][Exception]$Exception
+    )
+    [int]$delaySeconds = if ($StatusCode -eq 429) { 65 } else { [math]::Pow(2, $Attempt - 1) }
+    if ($StatusCode -eq 429) {
+        try {
+            $candidate = $Exception
+            while ($null -ne $candidate -and
+                (-not $candidate.PSObject.Properties['Response'] -or $null -eq $candidate.Response)) {
+                $candidate = $candidate.InnerException
+            }
+            $retryAfter = $candidate.Response.Headers.RetryAfter
+            if ($null -ne $retryAfter -and $null -ne $retryAfter.Delta) {
+                $delaySeconds = [math]::Max($delaySeconds, [math]::Ceiling($retryAfter.Delta.TotalSeconds))
+            }
+        }
+        catch {}
+    }
+    return [math]::Min($delaySeconds, 180)
+}
+
+function Invoke-GoogleOAuthTokenRequest {
+    param(
+        [Parameter(Mandatory)][string]$Assertion,
+        [ValidateRange(1, 4)][int]$MaxAttempts = 4
+    )
+    $MaxAttempts = [math]::Min($MaxAttempts, $script:RequestMaxAttempts)
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $remainingSeconds = [math]::Floor(($script:RequestDeadlineUtc - [DateTimeOffset]::UtcNow).TotalSeconds)
+        if ($remainingSeconds -le 0) { throw 'Časový limit běhu vypršel před přihlášením ke Google.' }
+        [int]$requestTimeoutSeconds = if ($remainingSeconds -gt 60) { 60 } else { [math]::Max(1, [int]$remainingSeconds) }
+        try {
+            return Invoke-RestMethod -Method Post -Uri 'https://oauth2.googleapis.com/token' `
+                -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop `
+                -Body @{ grant_type = 'urn:ietf:params:oauth:grant-type:jwt-bearer'; assertion = $Assertion } `
+                -TimeoutSec $requestTimeoutSeconds
+        }
+        catch {
+            $status = Get-SiolaHttpStatusCode -Exception $_.Exception
+            # No HTTP status means DNS, TCP, TLS, or timeout failed before a response arrived.
+            $retryable = $null -eq $status -or $status -in @(408, 429, 500, 502, 503, 504)
+            if (-not $retryable -or $attempt -eq $MaxAttempts) { throw }
+            $sleepSeconds = Get-SiolaRetryDelaySeconds -StatusCode $status -Attempt $attempt -Exception $_.Exception
+            if ([DateTimeOffset]::UtcNow.AddSeconds($sleepSeconds + 1) -ge $script:RequestDeadlineUtc) {
+                throw 'Časový limit běhu vypršel během opakování přihlášení ke Google.'
+            }
+            Start-Sleep -Seconds $sleepSeconds
+        }
+    }
+}
+
 function ConvertTo-Base64Url {
     param([byte[]]$Bytes)
     return [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
@@ -65,10 +134,7 @@ function Get-GoogleServiceAccountToken {
     finally { $rsa.Dispose() }
 
     $assertion = "$unsigned.$(ConvertTo-Base64Url $signatureBytes)"
-    $tokenResponse = Invoke-RestMethod -Method Post -Uri 'https://oauth2.googleapis.com/token' `
-        -ContentType 'application/x-www-form-urlencoded' `
-        -Body @{ grant_type = 'urn:ietf:params:oauth:grant-type:jwt-bearer'; assertion = $assertion } `
-        -TimeoutSec 60
+    $tokenResponse = Invoke-GoogleOAuthTokenRequest -Assertion $assertion
     if (-not $tokenResponse.access_token) { throw 'Google OAuth nevrátil access token.' }
     if ($AsSession) {
         $lifetime = if ($tokenResponse.PSObject.Properties['expires_in']) { [int]$tokenResponse.expires_in } else { 3600 }
@@ -123,32 +189,10 @@ function Invoke-GoogleSheetsRequest {
             return Invoke-RestMethod @arguments
         }
         catch {
-            $errorRecord = $_
-            $status = $null
-            $httpException = $errorRecord.Exception
-            if (-not $httpException.PSObject.Properties['Response'] -and
-                $null -ne $httpException.InnerException) {
-                $httpException = $httpException.InnerException
-            }
-            if ($httpException.PSObject.Properties['Response'] -and $null -ne $httpException.Response) {
-                $status = [int]$httpException.Response.StatusCode
-            }
-            elseif ($httpException.PSObject.Properties['StatusCode'] -and $null -ne $httpException.StatusCode) {
-                $status = [int]$httpException.StatusCode
-            }
-            $retryable = $status -in @(408, 429, 500, 502, 503, 504)
+            $status = Get-SiolaHttpStatusCode -Exception $_.Exception
+            $retryable = $null -eq $status -or $status -in @(408, 429, 500, 502, 503, 504)
             if (-not $retryable -or $attempt -eq $MaxAttempts) { throw }
-            [int]$delaySeconds = if ($status -eq 429) { 65 } else { [math]::Pow(2, $attempt - 1) }
-            if ($status -eq 429) {
-                try {
-                    $retryAfter = $httpException.Response.Headers.RetryAfter
-                    if ($null -ne $retryAfter -and $null -ne $retryAfter.Delta) {
-                        $delaySeconds = [math]::Max($delaySeconds, [math]::Ceiling($retryAfter.Delta.TotalSeconds))
-                    }
-                }
-                catch {}
-            }
-            $sleepSeconds = [math]::Min($delaySeconds, 180)
+            $sleepSeconds = Get-SiolaRetryDelaySeconds -StatusCode $status -Attempt $attempt -Exception $_.Exception
             if ([DateTimeOffset]::UtcNow.AddSeconds($sleepSeconds + 1) -ge $script:RequestDeadlineUtc) {
                 throw 'Časový limit běhu vypršel během opakování požadavku Google Sheets.'
             }

@@ -91,8 +91,10 @@ error; the code does not guess.
 - Reviewed HTML previews are deleted when LIVE is enabled. Otherwise an expired
   preview is deleted on the next automation run after two days. Runtime logs are
   retained for 90 days in an ACL-restricted folder.
-- Google tokens refresh during long runs; HTTP calls have bounded timeouts and
-  quota-aware retry delays.
+- Google tokens refresh during long runs. Before any claim or email, transient
+  DNS, connection, timeout, 408/429, and server failures receive bounded retries;
+  authentication and permission errors fail immediately. HTTP calls have bounded
+  timeouts and quota-aware retry delays.
 - A controlled run deadline stops before claiming work that cannot safely finish;
   the Task Scheduler limit is longer than that deadline.
 

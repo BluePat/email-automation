@@ -66,7 +66,7 @@ test("operating manual covers safe disable and missed-run behavior", () => {
   assert.match(operatingManual, /Nezapínejte úlohu přímo v Plánovači/);
   assert.match(operatingManual, /## Když počítač není v naplánovaný čas připravený/);
   assert.match(operatingManual, /Automat počítač neprobudí/);
-  assert.match(operatingManual, /automatické opakování po chybě/);
+  assert.match(operatingManual, /Plánovač poté nespouští další mimořádný běh/);
   assert.match(installer, /New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew/);
   assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$identity -LogonType Interactive/);
 });
@@ -144,11 +144,19 @@ test("Google access tokens are refreshed during LIVE processing", () => {
 });
 
 test("Google HTTP calls have bounded timeouts and quota-aware 429 delay", () => {
-  assert.match(google, /-TimeoutSec 60/);
+  assert.match(google, /\$remainingSeconds -gt 60\) \{ 60 \}/);
   assert.match(google, /TimeoutSec = \$requestTimeoutSeconds/);
-  assert.match(google, /\$status -eq 429\) \{ 65 \}/);
+  assert.match(google, /\$StatusCode -eq 429\) \{ 65 \}/);
   assert.match(google, /RetryAfter/);
   assert.match(google, /Časový limit běhu vypršel během opakování/);
+});
+
+test("Google OAuth retries only transient failures before any sheet or Outlook work", () => {
+  assert.match(google, /function Invoke-GoogleOAuthTokenRequest/);
+  assert.match(google, /\$null -eq \$status -or \$status -in @\(408, 429, 500, 502, 503, 504\)/);
+  assert.match(google, /Invoke-GoogleOAuthTokenRequest -Assertion \$assertion/);
+  assert.match(google, /\[ValidateRange\(1, 4\)\]\[int\]\$MaxAttempts = 4/);
+  assert.match(google, /TimeoutSec = \$requestTimeoutSeconds/);
 });
 
 test("non-send status writes receive the same freshness protection", () => {

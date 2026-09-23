@@ -90,7 +90,7 @@ jen pro přihlášeného uživatele, který provedl instalaci. Sama počítač n
 | Počítač spí | Automat počítač neprobudí. Zmeškaný běh se zařadí po probuzení, jakmile je k dispozici přihlášená relace správného uživatele. |
 | Počítač běží, ale uživatel je odhlášený | Běh čeká na přihlášení tohoto uživatele. |
 | Obrazovka je zamknutá, ale uživatel zůstal přihlášený | Zamknutí není odhlášení; Plánovač může úlohu spustit. Classic Outlook musí být v této relaci správně nakonfigurovaný. |
-| Není internet nebo Outlook/Google nejsou dostupné | Běh bezpečně skončí chybou a vytvoří log a `ACTION_REQUIRED.txt`. Automat nemá nastavené automatické opakování po chybě; další běžný pokus je následující den. |
+| Není internet nebo Outlook/Google nejsou dostupné | Přechodné síťové chyby přihlášení ke Google a bezpečně opakovatelné Google požadavky se v rámci stejného běhu nejvýše čtyřikrát zopakují. Pokud spojení stále nefunguje, běh bezpečně skončí chybou a vytvoří log a `ACTION_REQUIRED.txt`. Plánovač poté nespouští další mimořádný běh; další běžný pokus je následující den. |
 
 ## Samostatná diagnostika odesílajícího účtu Outlooku
 
